@@ -30,14 +30,14 @@ def clear_screen():
 
 def display_welcome_screen():
     """Wyświetla estetyczny ekran powitalny z tytułem i instrukcją obsługi."""
-    print(f"{Fore.CYAN}======================================")
-    print("===           diffH               ===")
-    print("======================================")
+    print(f"{Fore.GREEN}======================================")
+    print(f"{Fore.GREEN}===           diffH               ===")
+    print(f"{Fore.GREEN}======================================")
     if DEBUG_MODE:
         print(f"{Fore.MAGENTA}*** TRYB DEBUGOWANIA AKTYWNY ***")
     print(f"\n{Fore.WHITE}Instrukcja:")
     print("1. Przygotuj plik wejściowy z danymi w układzie PL-2000.")
-    print("   Format: [id, x, y, h] (separator: spacja, przecinek lub średnik).")
+    print("   Format: [id, x, y, h] lub [id, y, x, h] (separator: spacja, przecinek lub średnik).")
     print("   UWAGA: Skrypt automatycznie wykryje strefę 2000 w pliku.")
     print("2. Skrypt zapyta o ścieżkę do pliku i rodzaj porównania.")
     print("3. Wynik zostanie zapisany w pliku 'wynik.csv'.\n")
@@ -78,16 +78,22 @@ def get_max_distance() -> float:
         except ValueError:
             print(f"{Fore.RED}Błąd: Wprowadź poprawną liczbę.{Style.RESET_ALL}")
 
+def ask_swap_xy(file_label: str) -> bool:
+    """Pyta użytkownika czy zamienić kolumny X i Y dla danego pliku."""
+    while True:
+        resp = input(f"Czy plik {file_label} ma zamienioną kolejność kolumn (Y,X zamiast X,Y)? [t/n]: ").strip().lower()
+        if resp in ['t', 'tak', 'y', 'yes']:
+            return True
+        if resp in ['n', 'nie', 'no']:
+            return False
+        print("Wpisz 't' (tak) lub 'n' (nie).")
+
 # === Funkcje przetwarzania danych geoprzestrzennych ===
 
-def load_data(file_path: str) -> Optional[pd.DataFrame]:
+def load_data(file_path: str, swap_xy: bool = False) -> Optional[pd.DataFrame]:
     """
     Wczytuje dane z pliku tekstowego, automatycznie wykrywając separator.
-    - Próbuje wczytać plik z separatorem ';', ',', a na końcu spacją/tabulatorem.
-    - Nazywa pierwsze 4 kolumny jako 'id', 'x', 'y', 'h'.
-    - Konwertuje współrzędne i wysokość na typ liczbowy.
-    - Usuwa wiersze, w których konwersja się nie powiodła.
-    Zwraca obiekt DataFrame z biblioteki pandas lub None w przypadku błędu.
+    swap_xy: jeśli True, zamienia kolumny X i Y po wczytaniu.
     """
     print(f"Wczytuję plik: {file_path}")
     try:
@@ -100,6 +106,8 @@ def load_data(file_path: str) -> Optional[pd.DataFrame]:
                 if len(df.columns) >= 4:
                     df = df.iloc[:, :4]
                     df.columns = ['id', 'x', 'y', 'h']
+                    if swap_xy:
+                        df[['x', 'y']] = df[['y', 'x']]
                     for col in ['x', 'y', 'h']:
                         # Konwersja na liczby; błędy zamieniane są na 'NaN' (Not a Number)
                         df[col] = pd.to_numeric(df[col], errors='coerce')
@@ -331,30 +339,27 @@ def main():
     """Główna funkcja programu, która steruje całym procesem."""
     clear_screen()
     display_welcome_screen()
-    
     # Krok 1: Pobranie danych od użytkownika
     choice = get_user_choice()
-    
     max_distance = 0.0
     if choice in [1, 3]:
         max_distance = get_max_distance()
-        
     input_file = get_file_path("\nPodaj ścieżkę do pliku wejściowego: ")
+    swap_input = ask_swap_xy("wejściowego")
     comparison_file = None
+    swap_comparison = False
     if choice in [1, 3]:
         comparison_file = get_file_path("Podaj ścieżkę do pliku porównawczego: ")
-    
+        swap_comparison = ask_swap_xy("porównawczego")
     # Krok 2: Wczytanie danych z plików
     print(f"\n{Fore.CYAN}--- Wczytywanie danych ---{Style.RESET_ALL}")
-    input_df = load_data(input_file)
+    input_df = load_data(input_file, swap_input)
     if input_df is None or input_df.empty:
         print(f"{Fore.RED}Nie udało się wczytać danych wejściowych. Zamykanie programu.")
         return
-    
     comparison_df = None
     if comparison_file:
-        comparison_df = load_data(comparison_file)
-    
+        comparison_df = load_data(comparison_file, swap_comparison)
     # Krok 3: Główna logika przetwarzania
     use_geoportal = choice in [2, 3]
     results_df = process_data(input_df, comparison_df, use_geoportal, max_distance)
