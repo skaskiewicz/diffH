@@ -93,6 +93,19 @@ def ask_swap_xy(file_label: str) -> bool:
             return False
         print("Wpisz 't' (tak) lub 'n' (nie).")
 
+# Funkcja pobierająca dopuszczalną różnicę wysokości względem geoportalu.
+def get_geoportal_tolerance() -> float:
+    """Pobiera od użytkownika dopuszczalną różnicę wysokości względem geoportalu."""
+    while True:
+        try:
+            val = input(f"\n{Fore.YELLOW}Podaj dopuszczalną różnicę wysokości względem Geoportalu (w metrach, np. 0.2): {Style.RESET_ALL}")
+            val = float(val.replace(',', '.'))
+            if val >= 0:
+                return val
+            print(f"{Fore.RED}Błąd: Wartość nie może być ujemna.{Style.RESET_ALL}")
+        except ValueError:
+            print(f"{Fore.RED}Błąd: Wprowadź poprawną liczbę.{Style.RESET_ALL}")
+
 # === Funkcje przetwarzania danych geoprzestrzennych ===
 
 # Funkcja wczytująca dane z pliku tekstowego, automatycznie wykrywająca separator i zamieniająca kolumny X/Y jeśli trzeba.
@@ -284,7 +297,8 @@ def get_geoportal_heights(transformed_points: List[Tuple[float, float]]) -> Dict
 def process_data(input_df: pd.DataFrame, 
                 comparison_df: Optional[pd.DataFrame], 
                 use_geoportal: bool,
-                max_distance: float) -> pd.DataFrame:
+                max_distance: float,
+                geoportal_tolerance: Optional[float] = None) -> pd.DataFrame:
     """Główna funkcja przetwarzająca dane, wykonująca transformacje i porównania."""
     results = []  # Lista na wyniki końcowe
     total_points = len(input_df)
@@ -323,7 +337,6 @@ def process_data(input_df: pd.DataFrame,
         }
         # Parowanie punktów z plikiem porównawczym (jeśli wybrano)
         diff_h = None
-        diff_h_geo = None
         if comparison_df is not None and tree_comparison is not None and tree_input is not None:
             distance, nearest_idx_in_comp = tree_comparison.query([point['x_oryginal'], point['y_oryginal']])
             is_within_distance = (max_distance == 0) or (distance <= max_distance)
@@ -363,14 +376,13 @@ def process_data(input_df: pd.DataFrame,
             else:
                 diff_h_geoportal = 'brak_danych'
             row_data['diff_h_geoportal'] = diff_h_geoportal
-            if diff_h is not None and 'h_porownania' in row_data and height != 'brak_danych':
+            # Sprawdzenie tolerancji
+            if geoportal_tolerance is not None and diff_h_geoportal != 'brak_danych':
                 try:
-                    diff_h_geo = float(row_data['h_porownania']) - float(height)
+                    is_within = abs(float(diff_h_geoportal)) <= geoportal_tolerance
                 except Exception:
-                    diff_h_geo = 'brak_danych'
-                row_data['diff_h_geoportal_pair'] = diff_h_geo
-            if DEBUG_MODE:
-                print(f"[DEBUG] Punkt {i}: geoportal lookup {lookup_key} -> {height}")
+                    is_within = False
+                row_data['osiaga_dokladnosc'] = 'T' if is_within else 'F'
         results.append(row_data)
         # Pasek postępu w konsoli
         progress = (i + 1) / total_points
@@ -399,6 +411,9 @@ def process_data(input_df: pd.DataFrame,
             cols.remove('diff_h_geoportal')
             idx = cols.index('h_odniesienia') + 1
             cols.insert(idx, 'diff_h_geoportal')
+        if 'osiaga_dokladnosc' in cols:
+            cols.remove('osiaga_dokladnosc')
+            cols.append('osiaga_dokladnosc')
         results_df = results_df[cols]
     else:
         # Wstawiamy diff_h_geoportal po h_odniesienia
@@ -407,7 +422,21 @@ def process_data(input_df: pd.DataFrame,
             cols.remove('diff_h_geoportal')
             idx = cols.index('h_odniesienia') + 1
             cols.insert(idx, 'diff_h_geoportal')
+        if 'osiaga_dokladnosc' in cols:
+            cols.remove('osiaga_dokladnosc')
+            cols.append('osiaga_dokladnosc')
         results_df = results_df[cols]
+    # Sortowanie po bezwzględnej wartości diff_h_geoportal malejąco
+    if 'diff_h_geoportal' in results_df.columns:
+        def abs_or_nan(val):
+            try:
+                return abs(float(val))
+            except Exception:
+                return float('-inf')  # brak_danych na końcu
+        results_df = results_df.copy()
+        results_df['__abs_diff_h_geoportal'] = results_df['diff_h_geoportal'].apply(abs_or_nan)
+        results_df = results_df.sort_values(by='__abs_diff_h_geoportal', ascending=False)
+        results_df = results_df.drop(columns=['__abs_diff_h_geoportal'])
     return results_df
 
 # === Główna funkcja programu ===
@@ -430,9 +459,12 @@ def main():
     swap_input = ask_swap_xy("wejściowego")
     comparison_file = None
     swap_comparison = False
+    geoportal_tolerance = None
     if choice in [1, 3]:
         comparison_file = get_file_path("Podaj ścieżkę do pliku porównawczego: ")
         swap_comparison = ask_swap_xy("porównawczego")
+    if choice in [2, 3]:
+        geoportal_tolerance = get_geoportal_tolerance()
     # Krok 2: Wczytanie danych z plików
     print(f"\n{Fore.CYAN}--- Wczytywanie danych ---{Style.RESET_ALL}")
     input_df = load_data(input_file, swap_input)
@@ -444,7 +476,7 @@ def main():
         comparison_df = load_data(comparison_file, swap_comparison)
     # Krok 3: Główna logika przetwarzania
     use_geoportal = choice in [2, 3]
-    results_df = process_data(input_df, comparison_df, use_geoportal, max_distance)
+    results_df = process_data(input_df, comparison_df, use_geoportal, max_distance, geoportal_tolerance)
     
     # Krok 4: Zapis wyników do pliku CSV
     if not results_df.empty:
@@ -464,6 +496,8 @@ def main():
                 output_columns.append('diff_h_geoportal_pair')
         if 'geoportal_h' in results_df.columns:
             output_columns.append('geoportal_h')
+        if 'osiaga_dokladnosc' in results_df.columns:
+            output_columns.append('osiaga_dokladnosc')
         # Zapis do pliku CSV z odpowiednim formatowaniem
         results_df.to_csv(
             output_file, 
