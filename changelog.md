@@ -6,7 +6,27 @@ Format bazuje na [Keep a Changelog](https://keepachangelog.com/en/1.0.0/), a pro
 
 ---
 
-## [1.0.0] - 2023-10-27
+## [1.1.0] - 2025-06-28
+
+### Dodano
+
+* Automatyczne obliczanie różnicy wysokości pomiędzy plikiem wejściowym a plikiem porównawczym (`diff_h`) oraz pomiędzy plikiem wejściowym a geoportalem (`diff_h_geoportal`).
+* Kolumna `diff_h_geoportal` jest wstawiana po kolumnie `h_odniesienia`.
+* Kolumna `osiaga_dokladnosc` (T/F) informująca, czy różnica wysokości względem geoportalu mieści się w zadanej tolerancji.
+* Możliwość podania tolerancji różnicy wysokości względem geoportalu przez użytkownika.
+* Wyniki sortowane malejąco według wartości bezwzględnej różnicy wysokości względem geoportalu.
+* Obsługa porównania plik + plik + geoportal: dodatkowa kolumna `diff_h_geoportal_pair` (różnica h_porownania - geoportal_h).
+* Licznik sparowanych punktów (`paired_count`) przywrócony i poprawnie zliczany.
+
+## [1.0.1] - 2025-06-27
+
+### Naprawiono
+
+* Fix wysyłki punktów do geoportalu – ograniczenie paczki do 300 punktów wysyłanych na raz.
+* Dodano zaokrąglanie wczytywanych i zapisywanych współrzędnych do 2 miejsc po przecinku.
+* Zaokrąglenie zgodnie z regułą Bradissa-Kryłowa.
+
+## [1.0.0] - 2025-06-24
 
 ### Dodano
 
