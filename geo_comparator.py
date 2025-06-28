@@ -322,6 +322,8 @@ def process_data(input_df: pd.DataFrame,
             'h_odniesienia': point['h'],
         }
         # Parowanie punktów z plikiem porównawczym (jeśli wybrano)
+        diff_h = None
+        diff_h_geo = None
         if comparison_df is not None and tree_comparison is not None and tree_input is not None:
             distance, nearest_idx_in_comp = tree_comparison.query([point['x_oryginal'], point['y_oryginal']])
             is_within_distance = (max_distance == 0) or (distance <= max_distance)
@@ -338,6 +340,12 @@ def process_data(input_df: pd.DataFrame,
                     row_data['x_porownania'] = nearest_in_comp_point['x_oryginal']
                     row_data['y_porownania'] = nearest_in_comp_point['y_oryginal']
                     row_data['h_porownania'] = nearest_in_comp_point['h']
+                    # Różnica wysokości odniesienia - porównania
+                    try:
+                        diff_h = float(point['h']) - float(nearest_in_comp_point['h'])
+                    except Exception:
+                        diff_h = 'brak_danych'
+                    row_data['diff_h'] = diff_h
                     row_data['odleglosc_pary'] = distance
                     paired_count += 1
         # Pobieranie wysokości z Geoportalu (jeśli wybrano)
@@ -346,6 +354,21 @@ def process_data(input_df: pd.DataFrame,
             lookup_key = f"{easting_2180:.2f} {northing_2180:.2f}"
             height = geoportal_heights.get(lookup_key, "brak_danych")
             row_data['geoportal_h'] = str(height)
+            # Dodaj różnicę h_odniesienia - geoportal_h
+            if height != 'brak_danych' and point['h'] is not None:
+                try:
+                    diff_h_geoportal = float(point['h']) - float(height)
+                except Exception:
+                    diff_h_geoportal = 'brak_danych'
+            else:
+                diff_h_geoportal = 'brak_danych'
+            row_data['diff_h_geoportal'] = diff_h_geoportal
+            if diff_h is not None and 'h_porownania' in row_data and height != 'brak_danych':
+                try:
+                    diff_h_geo = float(row_data['h_porownania']) - float(height)
+                except Exception:
+                    diff_h_geo = 'brak_danych'
+                row_data['diff_h_geoportal_pair'] = diff_h_geo
             if DEBUG_MODE:
                 print(f"[DEBUG] Punkt {i}: geoportal lookup {lookup_key} -> {height}")
         results.append(row_data)
@@ -359,7 +382,33 @@ def process_data(input_df: pd.DataFrame,
     print("\n")
     if comparison_df is not None:
         print(f"{Fore.GREEN}Znaleziono i połączono {paired_count} par punktów.{Style.RESET_ALL}")
-    return pd.DataFrame(results)
+    # Przestawianie kolumn w odpowiedniej kolejności
+    results_df = pd.DataFrame(results)
+    if comparison_df is not None:
+        # Wstawiamy diff_h przed odleglosc_pary
+        cols = list(results_df.columns)
+        if 'diff_h' in cols and 'odleglosc_pary' in cols:
+            cols.remove('diff_h')
+            idx = cols.index('odleglosc_pary')
+            cols.insert(idx, 'diff_h')
+        if use_geoportal and 'diff_h_geoportal_pair' in cols and 'odleglosc_pary' in cols:
+            cols.remove('diff_h_geoportal_pair')
+            idx = cols.index('odleglosc_pary') + 1
+            cols.insert(idx, 'diff_h_geoportal_pair')
+        if 'diff_h_geoportal' in cols and 'h_odniesienia' in cols:
+            cols.remove('diff_h_geoportal')
+            idx = cols.index('h_odniesienia') + 1
+            cols.insert(idx, 'diff_h_geoportal')
+        results_df = results_df[cols]
+    else:
+        # Wstawiamy diff_h_geoportal po h_odniesienia
+        cols = list(results_df.columns)
+        if 'diff_h_geoportal' in cols and 'h_odniesienia' in cols:
+            cols.remove('diff_h_geoportal')
+            idx = cols.index('h_odniesienia') + 1
+            cols.insert(idx, 'diff_h_geoportal')
+        results_df = results_df[cols]
+    return results_df
 
 # === Główna funkcja programu ===
 def main():
@@ -401,14 +450,20 @@ def main():
     if not results_df.empty:
         output_file = 'wynik.csv'
         print(f"\n{Fore.CYAN}--- Zapisywanie wyników ---{Style.RESET_ALL}")
-        
         # Definicja kolumn w pliku wynikowym
         output_columns = ['id_odniesienia', 'x_odniesienia', 'y_odniesienia', 'h_odniesienia']
+        if 'diff_h_geoportal' in results_df.columns:
+            output_columns.append('diff_h_geoportal')
         if 'id_porownania' in results_df.columns:
-            output_columns.extend(['id_porownania', 'x_porownania', 'y_porownania', 'h_porownania', 'odleglosc_pary'])
+            output_columns.extend(['id_porownania', 'x_porownania', 'y_porownania', 'h_porownania'])
+            if 'diff_h' in results_df.columns:
+                output_columns.append('diff_h')
+            if 'odleglosc_pary' in results_df.columns:
+                output_columns.append('odleglosc_pary')
+            if 'diff_h_geoportal_pair' in results_df.columns:
+                output_columns.append('diff_h_geoportal_pair')
         if 'geoportal_h' in results_df.columns:
             output_columns.append('geoportal_h')
-        
         # Zapis do pliku CSV z odpowiednim formatowaniem
         results_df.to_csv(
             output_file, 
@@ -418,7 +473,6 @@ def main():
             float_format='%.2f',
             na_rep='brak_danych'
         )
-        
         print(f"\n{Fore.GREEN}Zakończono przetwarzanie pomyślnie!")
         print(f"Wyniki zostały zapisane w pliku: {os.path.abspath(output_file)}{Style.RESET_ALL}")
     else:
