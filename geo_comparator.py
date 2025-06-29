@@ -7,6 +7,7 @@ from pyproj import Transformer  # Transformacje współrzędnych geodezyjnych
 import requests  # Wysyłanie zapytań HTTP (np. do Geoportalu)
 from scipy.spatial import KDTree  # Efektywne wyszukiwanie najbliższych punktów
 from colorama import init, Fore, Style  # Kolorowanie tekstu w konsoli
+import geopandas as gpd # Dodano geopandas do obsługi danych przestrzennych
 
 # ==============================================================================
 # === KONFIGURACJA SKRYPTU ===
@@ -41,7 +42,7 @@ def display_welcome_screen():
     print("   Format: [id, x, y, h] lub [id, y, x, h] (separator: spacja, przecinek lub średnik).")
     print("   UWAGA: Skrypt automatycznie wykryje strefę 2000 w pliku.")
     print("2. Skrypt zapyta o ścieżkę do pliku i rodzaj porównania.")
-    print("3. Wynik zostanie zapisany w pliku 'wynik.csv'.\n")
+    print("3. Wynik zostanie zapisany w pliku 'wynik.csv' oraz w bazie przestrzennej 'wynik.gpkg'.\n")
 
 # Funkcja pobierająca od użytkownika wybór trybu działania programu.
 def get_user_choice() -> int:
@@ -293,6 +294,50 @@ def get_geoportal_heights(transformed_points: List[Tuple[float, float]]) -> Dict
             print(f"{Fore.RED}Błąd podczas komunikacji z Geoportalem (paczka {start+1}-{min(start+batch_size, total)}): {e}")
     return geoportal_heights
 
+def export_to_geopackage(results_df: pd.DataFrame, input_df: pd.DataFrame, gpkg_path: str, layer_name: str = "wyniki"):
+    """
+    Eksportuje DataFrame do pliku GeoPackage (.gpkg), który jest czytelny dla QGIS.
+    - Automatycznie tworzy geometrię punktową z kolumn x_odniesienia, y_odniesienia.
+    - Wykrywa układ współrzędnych (CRS) na podstawie danych wejściowych.
+    - Dodaje kolumnę 'eksport' typu bool (domyślnie True).
+    """
+    if results_df.empty:
+        print(f"{Fore.YELLOW}Brak danych do zapisu w GeoPackage.")
+        return
+
+    # Krok 1: Wykryj CRS na podstawie pierwszego punktu w pliku wejściowym
+    source_epsg = None
+    if not input_df.empty:
+        first_point_easting = input_df.iloc[0]['geodetic_easting']
+        source_epsg = get_source_epsg(first_point_easting)
+
+    if source_epsg is None:
+        print(f"{Fore.RED}Błąd: Nie można było ustalić źródłowego układu współrzędnych (EPSG) dla pliku wejściowego.")
+        print(f"{Fore.YELLOW}Plik GeoPackage nie zostanie utworzony.")
+        return
+
+    print(f"Wykryto układ współrzędnych dla pliku GeoPackage: EPSG:{source_epsg}")
+
+    # Krok 2: Przygotuj dane do konwersji
+    df_geo = results_df.copy()
+    df_geo['eksport'] = True
+    df_geo = df_geo.where(pd.notnull(df_geo), None)
+
+    # Krok 3: Utwórz GeoDataFrame
+    try:
+        # Zamieniono kolejność kolumn, aby dopasować się do konwencji GIS (x=Easting, y=Northing).
+        # W danych wejściowych 'y_odniesienia' to Easting, a 'x_odniesienia' to Northing.
+        geometry = gpd.points_from_xy(df_geo['y_odniesienia'], df_geo['x_odniesienia'])
+        gdf = gpd.GeoDataFrame(df_geo, geometry=geometry, crs=f"EPSG:{source_epsg}")
+
+        # Krok 4: Zapisz do pliku GeoPackage
+        gdf.to_file(gpkg_path, layer=layer_name, driver="GPKG")
+        print(f"{Fore.GREEN}Wyniki zostały poprawnie zapisane w bazie przestrzennej: {os.path.abspath(gpkg_path)}{Style.RESET_ALL}")
+
+    except Exception as e:
+        print(f"{Fore.RED}Wystąpił błąd podczas tworzenia pliku GeoPackage: {e}")
+
+
 # Główna funkcja przetwarzająca dane, wykonująca transformacje i porównania.
 def process_data(input_df: pd.DataFrame, 
                 comparison_df: Optional[pd.DataFrame], 
@@ -382,7 +427,7 @@ def process_data(input_df: pd.DataFrame,
                     is_within = abs(float(diff_h_geoportal)) <= geoportal_tolerance
                 except Exception:
                     is_within = False
-                row_data['osiaga_dokladnosc'] = 'T' if is_within else 'F'
+                row_data['osiaga_dokladnosc'] = 'Tak' if is_within else 'Nie'
         results.append(row_data)
         # Pasek postępu w konsoli
         progress = (i + 1) / total_points
@@ -446,7 +491,7 @@ def main():
     1. Wyświetla ekran powitalny i pobiera dane od użytkownika.
     2. Wczytuje pliki z danymi.
     3. Przetwarza dane zgodnie z wybranym trybem.
-    4. Zapisuje wyniki do pliku CSV.
+    4. Zapisuje wyniki do pliku CSV i GeoPackage.
     """
     clear_screen()
     display_welcome_screen()
@@ -478,11 +523,12 @@ def main():
     use_geoportal = choice in [2, 3]
     results_df = process_data(input_df, comparison_df, use_geoportal, max_distance, geoportal_tolerance)
     
-    # Krok 4: Zapis wyników do pliku CSV
+    # Krok 4: Zapis wyników
     if not results_df.empty:
-        output_file = 'wynik.csv'
         print(f"\n{Fore.CYAN}--- Zapisywanie wyników ---{Style.RESET_ALL}")
-        # Definicja kolumn w pliku wynikowym
+        
+        # --- Zapis do pliku CSV (bez zmian) ---
+        output_csv_file = 'wynik.csv'
         output_columns = ['id_odniesienia', 'x_odniesienia', 'y_odniesienia', 'h_odniesienia']
         if 'diff_h_geoportal' in results_df.columns:
             output_columns.append('diff_h_geoportal')
@@ -498,17 +544,22 @@ def main():
             output_columns.append('geoportal_h')
         if 'osiaga_dokladnosc' in results_df.columns:
             output_columns.append('osiaga_dokladnosc')
-        # Zapis do pliku CSV z odpowiednim formatowaniem
+        
         results_df.to_csv(
-            output_file, 
+            output_csv_file, 
             sep=';', 
             index=False, 
             columns=output_columns,
             float_format='%.2f',
             na_rep='brak_danych'
         )
+        print(f"{Fore.GREEN}Wyniki tabelaryczne zostały zapisane w pliku: {os.path.abspath(output_csv_file)}{Style.RESET_ALL}")
+
+        # Zapis do bazy GeoPackage
+        output_gpkg_file = 'wynik.gpkg'
+        export_to_geopackage(results_df, input_df, output_gpkg_file)
+        
         print(f"\n{Fore.GREEN}Zakończono przetwarzanie pomyślnie!")
-        print(f"Wyniki zostały zapisane w pliku: {os.path.abspath(output_file)}{Style.RESET_ALL}")
     else:
         print(f"{Fore.YELLOW}Nie wygenerowano żadnych wyników.")
 

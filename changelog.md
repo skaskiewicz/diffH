@@ -6,6 +6,14 @@ Format bazuje na [Keep a Changelog](https://keepachangelog.com/en/1.0.0/), a pro
 
 ---
 
+## [1.1.1] - 2025-06-29
+
+### Zmieniono
+
+* Kolumna `osiaga_dokladnosc` eksportowana do CSV i GeoPackage przyjmuje teraz wartości "Tak"/"Nie" zamiast "T"/"F".
+* Dodano eksport wyników do pliku GeoPackage (GPKG) – umożliwia bezpośrednie wykorzystanie wyników w aplikacjach GIS, poprawiając interoperacyjność danych przestrzennych.
+* Zaktualizowano komunikaty interfejsu oraz zależności, aby odzwierciedlić nową opcję eksportu do GeoPackage.
+
 ## [1.1.0] - 2025-06-28
 
 ### Dodano

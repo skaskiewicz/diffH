@@ -21,13 +21,14 @@
     *   W trybie porównania plik + plik + geoportal: dodatkowa kolumna `diff_h_geoportal_pair` (różnica h_porownania - geoportal_h).
 *   **Tolerancja dokładności:**
     *   Możliwość podania przez użytkownika dopuszczalnej różnicy wysokości względem geoportalu.
-    *   Kolumna `osiaga_dokladnosc` (T/F) informuje, czy różnica mieści się w zadanej tolerancji.
+    *   Kolumna `osiaga_dokladnosc` (Tak/Nie) informuje, czy różnica mieści się w zadanej tolerancji.
 *   **Inteligentna Analiza Danych:**
     *   **Automatyczne wykrywanie separatora** w plikach wejściowych (obsługuje średnik, przecinek, spację/tabulator).
     *   **Automatyczne wykrywanie konwencji osi współrzędnych** (czy plik używa układu geodezyjnego `X=Północ, Y=Wschód`, czy standardu GIS `X=Wschód, Y=Północ`).
 *   **Zaokrąglanie współrzędnych:** Wszystkie współrzędne i wysokości są zaokrąglane do 2 miejsc po przecinku zgodnie z regułą Bradissa-Kryłowa (bankers' rounding).
 *   **Przyjazny Interfejs:** Skrypt prowadzi użytkownika krok po kroku przez proces wyboru opcji i podawania plików.
 *   **Czysty Plik Wynikowy:** Generuje przejrzysty, tabelaryczny plik `wynik.csv`, gotowy do importu w innych programach (np. Excel, QGIS). Wyniki są sortowane malejąco według wartości bezwzględnej różnicy wysokości względem geoportalu.
+*   **Eksport do GeoPackage (GPKG):** Możliwość zapisu wyników do pliku GeoPackage, który można otworzyć bezpośrednio w QGIS lub innych programach GIS. Ułatwia to dalszą analizę i wizualizację danych przestrzennych.
 
 ### Wymagania i Instalacja
 
@@ -47,6 +48,7 @@ Aby uruchomić skrypt, potrzebujesz:
     requests
     scipy
     colorama
+    geopandas
     ```
 
 3.  **Otwórz terminal** (wiersz poleceń) w tym folderze.
@@ -82,7 +84,7 @@ Po wykonaniu tych kroków środowisko jest gotowe do pracy.
     *   Jeśli wybrałeś porównanie plików, podaj maksymalną odległość wyszukiwania pary.
     *   Podaj ścieżki do pliku wejściowego i (opcjonalnie) porównawczego.
     *   Jeśli wybrałeś porównanie z geoportalem, podaj dopuszczalną różnicę wysokości.
-4.  Po zakończeniu pracy, w folderze ze skryptem zostanie utworzony plik `wynik.csv`.
+4.  Po zakończeniu pracy, w folderze ze skryptem zostanie utworzony plik `wynik.csv` oraz plik `wynik.gpkg` (GeoPackage do GIS).
 
 ### Format Pliku Wejściowego
 
@@ -103,10 +105,11 @@ Po wykonaniu tych kroków środowisko jest gotowe do pracy.
 *   Nazwa pliku: `wynik.csv`
 *   Separator: średnik (`;`)
 *   Brakujące dane są oznaczane jako `brak_danych`.
+*   Dodatkowo generowany jest plik `wynik.gpkg` (GeoPackage) z wynikami przestrzennymi gotowymi do użycia w QGIS lub innym oprogramowaniu GIS.
 *   Możliwe kolumny:
     *   `id_odniesienia`, `x_odniesienia`, `y_odniesienia`, `h_odniesienia`: Dane z pliku wejściowego.
     *   `diff_h_geoportal`: Różnica wysokości pomiędzy plikiem wejściowym a geoportalem (wstawiana po h_odniesienia).
-    *   `osiaga_dokladnosc`: Informacja (T/F), czy różnica wysokości mieści się w zadanej tolerancji (ostatnia kolumna).
+    *   `osiaga_dokladnosc`: Informacja (Tak/Nie), czy różnica wysokości mieści się w zadanej tolerancji (ostatnia kolumna).
     *   `id_porownania`, `x_porownania`, `y_porownania`, `h_porownania`: Dane dopasowanego punktu z pliku porównawczego.
     *   `diff_h`: Różnica wysokości pomiędzy plikiem wejściowym a porównawczym.
     *   `odleglosc_pary`: Odległość w metrach między sparowanymi punktami.
