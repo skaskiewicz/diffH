@@ -39,8 +39,11 @@ def display_welcome_screen():
         print(f"{Fore.MAGENTA}*** TRYB DEBUGOWANIA AKTYWNY ***")
     print(f"\n{Fore.WHITE}Instrukcja:")
     print("1. Przygotuj plik wejściowy z danymi w układzie PL-2000.")
-    print("   Format: [id, x, y, h] lub [id, y, x, h] (separator: spacja, przecinek lub średnik).")
+    print("   Format: [id, x, y, h] lub [id, y, x, h] (separator: spacja, przecinek, średnik) lub plik Excel (xls/xlsx).")
+    print("   Obsługiwane formaty: CSV, TXT, XLS, XLSX.")
     print("   UWAGA: Skrypt automatycznie wykryje strefę 2000 w pliku.")
+    print("   Jeśli plik nie zawiera kolumny z numerami punktów (tylko 3 kolumny), program zapyta o prefiks i nada automatyczną numerację.")
+    print("   Plik musi mieć dokładnie 3 lub 4 kolumny. W innym przypadku import zostanie przerwany.")
     print("2. Skrypt zapyta o ścieżkę do pliku i rodzaj porównania.")
     print("3. Wynik zostanie zapisany w pliku 'wynik.csv' oraz w bazie przestrzennej 'wynik.gpkg'.\n")
 
@@ -112,38 +115,86 @@ def get_geoportal_tolerance() -> float:
 # Funkcja wczytująca dane z pliku tekstowego, automatycznie wykrywająca separator i zamieniająca kolumny X/Y jeśli trzeba.
 def load_data(file_path: str, swap_xy: bool = False) -> Optional[pd.DataFrame]:
     """
-    Wczytuje dane z pliku tekstowego, automatycznie wykrywając separator.
+    Wczytuje dane z pliku tekstowego lub Excel, automatycznie wykrywając separator.
     swap_xy: jeśli True, zamienia kolumny X i Y po wczytaniu.
     Dodatkowo zaokrągla współrzędne i wysokości do 2 miejsc zgodnie z regułą Bradissa-Kryłowa.
+    Jeśli plik ma 3 kolumny, pyta użytkownika o prefiks i nadaje automatyczną numerację punktów.
+    Jeśli liczba kolumn jest inna niż 3 lub 4, przerywa import z komunikatem.
+    Dodatkowo: jeśli po wczytaniu pliku jest tylko jedna kolumna, spróbuj ponownie z innymi separatorami.
     """
     print(f"Wczytuję plik: {file_path}")
     try:
-        for sep in [';', ',', r'\s+']:
+        file_ext = os.path.splitext(file_path)[1].lower()
+        def handle_columns(df):
+            if len(df.columns) == 4:
+                df.columns = ['id', 'x', 'y', 'h']
+                return df
+            elif len(df.columns) == 3:
+                print(f"{Fore.YELLOW}Wykryto 3 kolumny (brak numeru punktu).")
+                prefix = input("Podaj prefiks dla numeracji punktów (np. P): ").strip() or "P"
+                df.columns = ['x', 'y', 'h']
+                df.insert(0, 'id', [f"{prefix}_{i+1}" for i in range(len(df))])
+                print(f"{Fore.GREEN}Dodano automatyczną numerację punktów z prefiksem '{prefix}'.")
+                return df
+            else:
+                print(f"{Fore.RED}Błąd: Plik musi mieć dokładnie 3 lub 4 kolumny (wykryto: {len(df.columns)}). Import przerwany.")
+                return None
+        if file_ext in ['.xls', '.xlsx']:
+            try:
+                df = pd.read_excel(file_path, header=None, dtype=str, engine='openpyxl' if file_ext == '.xlsx' else None)
+            except ImportError:
+                print(f"{Fore.RED}Błąd: Do obsługi plików Excel wymagany jest pakiet openpyxl. Zainstaluj go poleceniem: pip install openpyxl")
+                return None
+            df = df.dropna(axis=1, how='all')  # usuń puste kolumny
+            df = handle_columns(df)
+            if df is None:
+                return None
+            if swap_xy:
+                if DEBUG_MODE:
+                    print(f"[DEBUG] Zamieniam kolumny X i Y dla pliku {file_path}")
+                df[['x', 'y']] = df[['y', 'x']]
+            for col in ['x', 'y', 'h']:
+                df[col] = pd.to_numeric(df[col], errors='coerce')
+                df[col] = df[col].apply(lambda v: round_bradis_krylov(v, 2) if pd.notnull(v) else v)
+                if DEBUG_MODE:
+                    print(f"[DEBUG] Kolumna {col} po zaokrągleniu: {df[col].tolist()}")
+            df.dropna(subset=['x', 'y', 'h'], inplace=True)
+            print(f"{Fore.GREEN}Plik Excel wczytany poprawnie ({len(df)} wierszy).")
+            return df
+        # Obsługa plików CSV/TXT
+        tried_separators = [';', ',', r'\s+']
+        for sep in tried_separators:
             try:
                 if DEBUG_MODE:
                     print(f"[DEBUG] Próbuję separator: '{sep}' dla pliku {file_path}")
                 df = pd.read_csv(file_path, sep=sep, header=None, on_bad_lines='skip', engine='python', dtype=str)
-                if len(df.columns) >= 4:
-                    df = df.iloc[:, :4]
-                    df.columns = ['id', 'x', 'y', 'h']
-                    if swap_xy:
-                        if DEBUG_MODE:
-                            print(f"[DEBUG] Zamieniam kolumny X i Y dla pliku {file_path}")
-                        df[['x', 'y']] = df[['y', 'x']]
-                    for col in ['x', 'y', 'h']:
-                        df[col] = pd.to_numeric(df[col], errors='coerce')
-                        df[col] = df[col].apply(lambda v: round_bradis_krylov(v, 2) if pd.notnull(v) else v)
-                        if DEBUG_MODE:
-                            print(f"[DEBUG] Kolumna {col} po zaokrągleniu: {df[col].tolist()}")
-                    df.dropna(subset=['x', 'y', 'h'], inplace=True)
-                    sep_display = 'spacja/tab' if sep == r'\s+' else sep
-                    print(f"{Fore.GREEN}Plik wczytany poprawnie (separator: '{sep_display}', {len(df)} wierszy).")
-                    return df
+                df = df.dropna(axis=1, how='all')  # usuń puste kolumny
+                # --- jeśli tylko jedna kolumna, spróbuj ponownie z innym separatorem ---
+                if len(df.columns) == 1:
+                    continue
+                df = handle_columns(df)
+                if df is None:
+                    return None
+                if swap_xy:
+                    if DEBUG_MODE:
+                        print(f"[DEBUG] Zamieniam kolumny X i Y dla pliku {file_path}")
+                    df[['x', 'y']] = df[['y', 'x']]
+                for col in ['x', 'y', 'h']:
+                    df[col] = pd.to_numeric(df[col], errors='coerce')
+                    df[col] = df[col].apply(lambda v: round_bradis_krylov(v, 2) if pd.notnull(v) else v)
+                    if DEBUG_MODE:
+                        print(f"[DEBUG] Kolumna {col} po zaokrągleniu: {df[col].tolist()}")
+                df.dropna(subset=['x', 'y', 'h'], inplace=True)
+                sep_display = 'spacja/tab' if sep == r'\s+' else sep
+                print(f"{Fore.GREEN}Plik wczytany poprawnie (separator: '{sep_display}', {len(df)} wierszy).")
+                return df
             except Exception as ex:
                 if DEBUG_MODE:
                     print(f"[DEBUG] Błąd przy próbie separatora '{sep}': {ex}")
                 continue
-        raise ValueError("Nie udało się zinterpretować pliku. Sprawdź format i separator.")
+        # --- jeśli po wszystkich próbach nadal tylko jedna kolumna, zgłoś błąd ---
+        print(f"{Fore.RED}Nie udało się rozpoznać separatora lub plik nie ma poprawnej struktury (próbowano: {tried_separators}).")
+        return None
     except Exception as e:
         print(f"{Fore.RED}Błąd podczas wczytywania pliku: {e}")
         return None
@@ -471,11 +522,12 @@ def process_data(input_df: pd.DataFrame,
             cols.remove('osiaga_dokladnosc')
             cols.append('osiaga_dokladnosc')
         results_df = results_df[cols]
-    # Sortowanie po bezwzględnej wartości diff_h_geoportal malejąco
-    if 'diff_h_geoportal' in results_df.columns:
-        def abs_or_nan(val):
+    # --- sortowanie wyników według różnicy wysokości geoportalu (malejąco) ---
+    if use_geoportal and 'diff_h_geoportal' in results_df.columns:
+        # Funkcja pomocnicza do obsługi wartości 'brak_danych'
+        def abs_or_nan(value):
             try:
-                return abs(float(val))
+                return abs(float(value))
             except Exception:
                 return float('-inf')  # brak_danych na końcu
         results_df = results_df.copy()
