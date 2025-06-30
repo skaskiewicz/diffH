@@ -15,8 +15,8 @@ import traceback
 
 # ==============================================================================
 # === KONFIGURACJA SKRYPTU ===
-DEBUG_MODE = True
-CONCURRENT_API_REQUESTS = 3
+DEBUG_MODE = False
+CONCURRENT_API_REQUESTS = 10
 # ======================================================================
 
 def debug_log(msg: str):
@@ -30,7 +30,9 @@ def clear_screen():
     os.system('cls' if os.name == 'nt' else 'clear')
 
 def display_welcome_screen():
-    print(f"{Fore.GREEN}{'='*38}\n===           diffH v1.3          ===\n{'='*38}")
+    print(f"{Fore.GREEN}======================================")
+    print(f"{Fore.GREEN}===           diffH               ===")
+    print(f"{Fore.GREEN}======================================")
     if DEBUG_MODE:
         print(f"{Fore.MAGENTA}*** TRYB DEBUGOWANIA AKTYWNY ***")
     print(f"\n{Fore.WHITE}Instrukcja:\n1. Przygotuj plik wejściowy (CSV, TXT, XLS, XLSX) z danymi w układzie PL-2000.\n   Format: [id, x, y, h] lub [x, y, h]. Skrypt automatycznie wykryje strefę.\n2. Postępuj zgodnie z instrukcjami na ekranie.\n3. Wynik zostanie zapisany w plikach '{'wynik.csv'}' oraz '{'wynik.gpkg'}'.\n")
@@ -349,8 +351,10 @@ def process_data(input_df: pd.DataFrame,
                 
                 if height != 'brak_danych' and pd.notnull(point['h']):
                     try:
-                        diff_h_geoportal = float(point['h']) - float(height)
+                        diff_h_geoportal = round(float(point['h']) - float(height), 2)
                         row_data['diff_h_geoportal'] = diff_h_geoportal
+                        if i == 0:
+                            debug_log(f"Obliczam diff_h_geoportal: {point['h']} (punkt) - {height} (geoportal) = {diff_h_geoportal}")
                         if geoportal_tolerance is not None:
                             row_data['osiaga_dokladnosc'] = 'Tak' if abs(diff_h_geoportal) <= geoportal_tolerance else 'Nie'
                     except (ValueError, TypeError):
