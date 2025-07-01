@@ -2,7 +2,7 @@
 import os
 from typing import Dict, List, Tuple, Optional
 import pandas as pd
-from pyproj import Transformer  # Usunięto nieużywany import CRS
+from pyproj import Transformer
 from pyproj.exceptions import CRSError
 import requests
 from scipy.spatial import KDTree
@@ -12,6 +12,7 @@ from tqdm import tqdm
 import multiprocessing
 from concurrent.futures import ThreadPoolExecutor
 import traceback
+import math
 
 # ==============================================================================
 # === KONFIGURACJA SKRYPTU ===
@@ -95,7 +96,10 @@ def load_data(file_path: str, swap_xy: bool = False) -> Optional[pd.DataFrame]:
     try:
         file_ext = os.path.splitext(file_path)[1].lower()
         def handle_columns(df):
-            if len(df.columns) == 4:
+            if len(df.columns) >= 4:
+                if len(df.columns) > 4:
+                    print(f"{Fore.YELLOW}Wykryto więcej niż 4 kolumny. Importowane będą tylko pierwsze 4 kolumny.")
+                    df = df.iloc[:, :4]
                 df.columns = ['id', 'x', 'y', 'h']
                 return df
             elif len(df.columns) == 3:
@@ -106,7 +110,7 @@ def load_data(file_path: str, swap_xy: bool = False) -> Optional[pd.DataFrame]:
                 print(f"{Fore.GREEN}Dodano automatyczną numerację punktów z prefiksem '{prefix}'.")
                 return df
             else:
-                print(f"{Fore.RED}Błąd: Plik musi mieć dokładnie 3 lub 4 kolumny (wykryto: {len(df.columns)}). Import przerwany.")
+                print(f"{Fore.RED}Błąd: Plik musi mieć dokładnie 3, 4 lub więcej kolumn (wykryto: {len(df.columns)}). Import przerwany.")
                 return None
         if file_ext in ['.xls', '.xlsx']:
             try:
@@ -234,7 +238,7 @@ def fetch_height_batch(batch: List[Tuple[float, float]]) -> Dict[str, float]:
 
 # === ZAKTUALIZOWANE FUNKCJE GEOPRZETWARZANIA ===
 def transform_coordinates_parallel(df: pd.DataFrame) -> List[Optional[Tuple[float, float]]]:
-    print(f"\n{Fore.CYAN}Transformuję współrzędne (równolegle)...{Style.RESET_ALL}")
+    print(f"\n{Fore.CYAN}Transformuję współrzędne ...{Style.RESET_ALL}")
     points_to_transform = list(zip(df['geodetic_northing'], df['geodetic_easting']))
     if points_to_transform:
         debug_log(f"[1/len={len(points_to_transform)}] Transformuję punkt: ({points_to_transform[0][0]:.2f}, {points_to_transform[0][1]:.2f}) ... (reszta pominięta)")
@@ -245,7 +249,7 @@ def transform_coordinates_parallel(df: pd.DataFrame) -> List[Optional[Tuple[floa
     return results
 
 def get_geoportal_heights_concurrent(transformed_points: List[Optional[Tuple[float, float]]]) -> Dict[str, float]:
-    print(f"\n{Fore.CYAN}Pobieranie danych z Geoportalu (równolegle)...{Style.RESET_ALL}")
+    print(f"\n{Fore.CYAN}Pobieranie danych z Geoportalu ...{Style.RESET_ALL}")
     valid_points = [p for p in transformed_points if p is not None]
     debug_log(f"Liczba poprawnych punktów do pobrania wysokości: {len(valid_points)}")
     if not valid_points:
@@ -278,6 +282,9 @@ def export_to_geopackage(results_df: pd.DataFrame, input_df: pd.DataFrame, gpkg_
     print(f"Wykryto układ współrzędnych dla pliku GeoPackage: EPSG:{source_epsg}")
     try:
         df_geo = results_df.copy()
+        # Zaokrąglenie wysokości do 2 miejsc po przecinku
+        if 'h_odniesienia' in df_geo.columns:
+            df_geo['h_odniesienia'] = pd.to_numeric(df_geo['h_odniesienia'], errors='coerce').round(2)
         # Dodaj/aktualizuj kolumnę 'eksport' zgodnie z warunkiem dokładności
         if 'osiaga_dokladnosc' in df_geo.columns:
             df_geo['eksport'] = df_geo['osiaga_dokladnosc'].apply(lambda x: True if str(x).strip().lower() == 'tak' else False)
@@ -355,7 +362,9 @@ def process_data(input_df: pd.DataFrame,
                     'odleglosc_pary': distance
                 })
                 try:
-                    row_data['diff_h'] = float(point['h']) - float(nearest_in_comp_point['h'])
+                    diff = float(point['h']) - float(nearest_in_comp_point['h'])
+                    diff_rounded = round(diff, 2)
+                    row_data['diff_h'] = math.copysign(diff_rounded, 1.0)
                 except (ValueError, TypeError):
                     row_data['diff_h'] = 'brak_danych'
                 paired_count += 1
@@ -371,11 +380,10 @@ def process_data(input_df: pd.DataFrame,
                 if i == 0:
                     debug_log(f"Punkt {i}: lookup_key={lookup_key}, geoportal_h={height} ... (reszta lookup_key pominięta)")
                 row_data['geoportal_h'] = str(height)
-                
                 if height != 'brak_danych' and pd.notnull(point['h']):
                     try:
                         diff_h_geoportal = round(float(point['h']) - float(height), 2)
-                        row_data['diff_h_geoportal'] = diff_h_geoportal
+                        row_data['diff_h_geoportal'] = math.copysign(diff_h_geoportal, 1.0)
                         if i == 0:
                             debug_log(f"Obliczam diff_h_geoportal: {point['h']} (punkt) - {height} (geoportal) = {diff_h_geoportal}")
                         if geoportal_tolerance is not None:
