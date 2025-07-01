@@ -275,10 +275,30 @@ def export_to_geopackage(results_df: pd.DataFrame, input_df: pd.DataFrame, gpkg_
     print(f"Wykryto układ współrzędnych dla pliku GeoPackage: EPSG:{source_epsg}")
     try:
         df_geo = results_df.copy()
+        # Dodaj/aktualizuj kolumnę 'eksport' zgodnie z warunkiem dokładności
+        if 'osiaga_dokladnosc' in df_geo.columns:
+            df_geo['eksport'] = df_geo['osiaga_dokladnosc'].apply(lambda x: True if str(x).strip().lower() == 'tak' else False)
+        else:
+            df_geo['eksport'] = True
         geometry = gpd.points_from_xy(df_geo['y_odniesienia'], df_geo['x_odniesienia'])
         gdf = gpd.GeoDataFrame(df_geo, geometry=geometry, crs=f"EPSG:{source_epsg}")
+        # 1. Eksport całościowy
         gdf.to_file(gpkg_path, layer=layer_name, driver="GPKG")
         print(f"{Fore.GREEN}Wyniki zostały poprawnie zapisane w bazie przestrzennej: {os.path.abspath(gpkg_path)}{Style.RESET_ALL}")
+        # 2. Eksport tylko spełniających warunek dokładności
+        gdf_ok = gdf[gdf['eksport']]
+        if not gdf_ok.empty:
+            gdf_ok.to_file(gpkg_path.replace('.gpkg', '_dokladne.gpkg'), layer=layer_name, driver="GPKG")
+            print(f"{Fore.GREEN}Wyniki spełniające warunek dokładności zapisano w: {os.path.abspath(gpkg_path.replace('.gpkg', '_dokladne.gpkg'))}{Style.RESET_ALL}")
+        else:
+            print(f"{Fore.YELLOW}Brak punktów spełniających warunek dokładności do eksportu.")
+        # 3. Eksport niespełniających warunku dokładności
+        gdf_nok = gdf[~gdf['eksport']]
+        if not gdf_nok.empty:
+            gdf_nok.to_file(gpkg_path.replace('.gpkg', '_niedokladne.gpkg'), layer=layer_name, driver="GPKG")
+            print(f"{Fore.GREEN}Wyniki niespełniające warunku dokładności zapisano w: {os.path.abspath(gpkg_path.replace('.gpkg', '_niedokladne.gpkg'))}{Style.RESET_ALL}")
+        else:
+            print(f"{Fore.YELLOW}Brak punktów niespełniających warunku dokładności do eksportu.")
     except Exception as e:
         print(f"{Fore.RED}Wystąpił błąd podczas tworzenia pliku GeoPackage: {e}")
 
