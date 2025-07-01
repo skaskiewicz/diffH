@@ -60,9 +60,15 @@ def get_file_path(prompt: str) -> str:
         print(f"{Fore.RED}Błąd: Plik nie istnieje. Spróbuj ponownie.")
 
 def get_max_distance() -> float:
+    default_distance = 15.0
     while True:
         try:
-            distance_str = input(f"\n{Fore.YELLOW}Podaj maksymalną odległość wyszukiwania pary w metrach (np. 0.5)\n(Wpisz 0, aby pominąć ten warunek): {Style.RESET_ALL}")
+            prompt = (f"\n{Fore.YELLOW}Podaj maksymalną odległość wyszukiwania pary w metrach (np. 0.5)\n"
+                f"(Wpisz 0, aby pominąć ten warunek, domyślnie {default_distance} m): {Style.RESET_ALL}")
+            distance_str = input(prompt)
+            if not distance_str.strip():
+                print(f"{Fore.CYAN}Przyjęto domyślną wartość: {default_distance} m{Style.RESET_ALL}")
+                return default_distance
             distance = float(distance_str.replace(',', '.'))
             if distance >= 0:
                 return distance
@@ -71,8 +77,12 @@ def get_max_distance() -> float:
             print(f"{Fore.RED}Błąd: Wprowadź poprawną liczbę.{Style.RESET_ALL}")
 
 def ask_swap_xy(file_label: str) -> bool:
+    default = 'n'
     while True:
-        resp = input(f"Czy plik {file_label} ma zamienioną kolejność kolumn (Y,X zamiast X,Y)? [t/n]: ").strip().lower()
+        resp = input(f"Czy plik {file_label} ma zamienioną kolejność kolumn (Y,X zamiast X,Y)? [t/n] (domyślnie: n): ").strip().lower()
+        if not resp:
+            print(f"{Fore.CYAN}Przyjęto domyślną odpowiedź: {default}{Style.RESET_ALL}")
+            return False
         if resp in ['t', 'tak', 'y', 'yes']:
             return True
         if resp in ['n', 'nie', 'no']:
@@ -80,9 +90,15 @@ def ask_swap_xy(file_label: str) -> bool:
         print("Wpisz 't' (tak) lub 'n' (nie).")
 
 def get_geoportal_tolerance() -> float:
+    default_tolerance = 0.2
     while True:
         try:
-            val = input(f"\n{Fore.YELLOW}Podaj dopuszczalną różnicę wysokości względem Geoportalu (w metrach, np. 0.2): {Style.RESET_ALL}")
+            prompt = (f"\n{Fore.YELLOW}Podaj dopuszczalną różnicę wysokości względem Geoportalu (w metrach, np. 0.2) "
+                f"(domyślnie: {default_tolerance}): {Style.RESET_ALL}")
+            val = input(prompt)
+            if not val.strip():
+                print(f"{Fore.CYAN}Przyjęto domyślną wartość: {default_tolerance}{Style.RESET_ALL}")
+                return default_tolerance
             val = float(val.replace(',', '.'))
             if val >= 0:
                 return val
