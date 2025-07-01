@@ -50,7 +50,10 @@ def get_user_choice() -> int:
 
 def get_file_path(prompt: str) -> str:
     while True:
-        file_path = input(prompt)
+        file_path = input(prompt).strip()
+        # Usuń tylko parę cudzysłowów lub apostrofów na początku i końcu
+        if (file_path.startswith('"') and file_path.endswith('"')) or (file_path.startswith("'") and file_path.endswith("'")):
+            file_path = file_path[1:-1]
         if os.path.exists(file_path):
             return file_path
         print(f"{Fore.RED}Błąd: Plik nie istnieje. Spróbuj ponownie.")
