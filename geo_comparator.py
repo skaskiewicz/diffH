@@ -1,60 +1,45 @@
 # === Importowanie niezbędnych bibliotek ===
-import os  # Operacje na plikach i systemie operacyjnym
-import sys  # Dostęp do funkcji systemowych (np. obsługa postępu)
-from typing import Dict, List, Tuple, Optional  # Typowanie dla lepszej czytelności kodu
-import pandas as pd  # Przetwarzanie i analiza danych tabelarycznych
-from pyproj import Transformer  # Transformacje współrzędnych geodezyjnych
-import requests  # Wysyłanie zapytań HTTP (np. do Geoportalu)
-from scipy.spatial import KDTree  # Efektywne wyszukiwanie najbliższych punktów
-from colorama import init, Fore, Style  # Kolorowanie tekstu w konsoli
-import geopandas as gpd # Dodano geopandas do obsługi danych przestrzennych
+import os
+from typing import Dict, List, Tuple, Optional
+import pandas as pd
+from pyproj import Transformer  # Usunięto nieużywany import CRS
+from pyproj.exceptions import CRSError
+import requests
+from scipy.spatial import KDTree
+from colorama import init, Fore, Style
+import geopandas as gpd
+from tqdm import tqdm
+import multiprocessing
+from concurrent.futures import ThreadPoolExecutor
+import traceback
 
 # ==============================================================================
 # === KONFIGURACJA SKRYPTU ===
-# Flaga DEBUG_MODE steruje wyświetlaniem szczegółowych komunikatów diagnostycznych.
-# Ustaw na True, aby zobaczyć szczegóły działania (przydatne podczas nauki i debugowania).
-# Ustaw na False, aby program działał "ciszej" i szybciej (zalecane w produkcji).
-DEBUG_MODE = False  # <--- WYŁĄCZONY TRYB DEBUGOWANIA
-# ==============================================================================
+DEBUG_MODE = False
+CONCURRENT_API_REQUESTS = 10
+# ======================================================================
 
-# Inicjalizacja biblioteki colorama, która umożliwia wyświetlanie kolorów w konsoli
-# na różnych systemach operacyjnych. `autoreset=True` powoduje, że każdy `print`
-# wraca do domyślnego koloru, nie trzeba ręcznie resetować stylu.
+def debug_log(msg: str):
+    if DEBUG_MODE:
+        print(f"{Fore.MAGENTA}[DEBUG]{Style.RESET_ALL} {msg}")
+
 init(autoreset=True)
 
 # === Funkcje pomocnicze interfejsu użytkownika ===
-
-# Funkcja czyszcząca ekran konsoli, aby poprawić czytelność wyświetlanych komunikatów.
 def clear_screen():
-    """Czyści ekran konsoli w zależności od systemu operacyjnego."""
     os.system('cls' if os.name == 'nt' else 'clear')
 
-# Funkcja wyświetlająca ekran powitalny z nazwą programu i instrukcją obsługi.
 def display_welcome_screen():
-    """Wyświetla estetyczny ekran powitalny z tytułem i instrukcją obsługi."""
     print(f"{Fore.GREEN}======================================")
     print(f"{Fore.GREEN}===           diffH               ===")
     print(f"{Fore.GREEN}======================================")
     if DEBUG_MODE:
         print(f"{Fore.MAGENTA}*** TRYB DEBUGOWANIA AKTYWNY ***")
-    print(f"\n{Fore.WHITE}Instrukcja:")
-    print("1. Przygotuj plik wejściowy z danymi w układzie PL-2000.")
-    print("   Format: [id, x, y, h] lub [id, y, x, h] (separator: spacja, przecinek, średnik) lub plik Excel (xls/xlsx).")
-    print("   Obsługiwane formaty: CSV, TXT, XLS, XLSX.")
-    print("   UWAGA: Skrypt automatycznie wykryje strefę 2000 w pliku.")
-    print("   Jeśli plik nie zawiera kolumny z numerami punktów (tylko 3 kolumny), program zapyta o prefiks i nada automatyczną numerację.")
-    print("   Plik musi mieć dokładnie 3 lub 4 kolumny. W innym przypadku import zostanie przerwany.")
-    print("2. Skrypt zapyta o ścieżkę do pliku i rodzaj porównania.")
-    print("3. Wynik zostanie zapisany w pliku 'wynik.csv' oraz w bazie przestrzennej 'wynik.gpkg'.\n")
+    print(f"\n{Fore.WHITE}Instrukcja:\n1. Przygotuj plik wejściowy (CSV, TXT, XLS, XLSX) z danymi w układzie PL-2000.\n   Format: [id, x, y, h] lub [x, y, h]. Skrypt automatycznie wykryje strefę.\n2. Postępuj zgodnie z instrukcjami na ekranie.\n3. Wynik zostanie zapisany w plikach '{'wynik.csv'}' oraz '{'wynik.gpkg'}'.\n")
 
-# Funkcja pobierająca od użytkownika wybór trybu działania programu.
 def get_user_choice() -> int:
-    """Pobiera od użytkownika wybór trybu działania (1, 2 lub 3) i waliduje go."""
     while True:
-        print(f"\n{Fore.YELLOW}Wybierz rodzaj porównania:")
-        print("[1] Porównaj plik wejściowy z drugim plikiem (w tym samym układzie)")
-        print("[2] Porównaj plik wejściowy z danymi wysokościowymi z Geoportal.gov.pl")
-        print("[3] Porównaj plik wejściowy z drugim plikiem ORAZ z Geoportal.gov.pl")
+        print(f"\n{Fore.YELLOW}Wybierz rodzaj porównania:\n[1] Porównaj plik wejściowy z drugim plikiem\n[2] Porównaj plik wejściowy z danymi z Geoportal.gov.pl\n[3] Porównaj plik wejściowy z drugim plikiem ORAZ z Geoportal.gov.pl")
         try:
             choice = int(input("\nTwój wybór (1-3): "))
             if 1 <= choice <= 3:
@@ -63,22 +48,20 @@ def get_user_choice() -> int:
         except ValueError:
             print(f"{Fore.RED}Błąd: Wprowadź poprawną liczbę.")
 
-# Funkcja pobierająca od użytkownika ścieżkę do pliku i sprawdzająca, czy plik istnieje.
 def get_file_path(prompt: str) -> str:
-    """Pobiera od użytkownika ścieżkę do pliku i sprawdza, czy plik istnieje."""
     while True:
-        file_path = input(prompt)
+        file_path = input(prompt).strip()
+        # Usuń tylko parę cudzysłowów lub apostrofów na początku i końcu
+        if (file_path.startswith('"') and file_path.endswith('"')) or (file_path.startswith("'") and file_path.endswith("'")):
+            file_path = file_path[1:-1]
         if os.path.exists(file_path):
             return file_path
         print(f"{Fore.RED}Błąd: Plik nie istnieje. Spróbuj ponownie.")
 
-# Funkcja pobierająca od użytkownika maksymalną odległość do parowania punktów.
 def get_max_distance() -> float:
-    """Pobiera od użytkownika maksymalną odległość do parowania punktów."""
     while True:
         try:
             distance_str = input(f"\n{Fore.YELLOW}Podaj maksymalną odległość wyszukiwania pary w metrach (np. 0.5)\n(Wpisz 0, aby pominąć ten warunek): {Style.RESET_ALL}")
-            # Zamienia przecinek na kropkę, aby obsłużyć oba formaty wprowadzania liczb
             distance = float(distance_str.replace(',', '.'))
             if distance >= 0:
                 return distance
@@ -86,9 +69,7 @@ def get_max_distance() -> float:
         except ValueError:
             print(f"{Fore.RED}Błąd: Wprowadź poprawną liczbę.{Style.RESET_ALL}")
 
-# Funkcja pytająca użytkownika, czy zamienić kolumny X i Y dla danego pliku.
 def ask_swap_xy(file_label: str) -> bool:
-    """Pyta użytkownika czy zamienić kolumny X i Y dla danego pliku."""
     while True:
         resp = input(f"Czy plik {file_label} ma zamienioną kolejność kolumn (Y,X zamiast X,Y)? [t/n]: ").strip().lower()
         if resp in ['t', 'tak', 'y', 'yes']:
@@ -97,9 +78,7 @@ def ask_swap_xy(file_label: str) -> bool:
             return False
         print("Wpisz 't' (tak) lub 'n' (nie).")
 
-# Funkcja pobierająca dopuszczalną różnicę wysokości względem geoportalu.
 def get_geoportal_tolerance() -> float:
-    """Pobiera od użytkownika dopuszczalną różnicę wysokości względem geoportalu."""
     while True:
         try:
             val = input(f"\n{Fore.YELLOW}Podaj dopuszczalną różnicę wysokości względem Geoportalu (w metrach, np. 0.2): {Style.RESET_ALL}")
@@ -110,18 +89,8 @@ def get_geoportal_tolerance() -> float:
         except ValueError:
             print(f"{Fore.RED}Błąd: Wprowadź poprawną liczbę.{Style.RESET_ALL}")
 
-# === Funkcje przetwarzania danych geoprzestrzennych ===
-
-# Funkcja wczytująca dane z pliku tekstowego, automatycznie wykrywająca separator i zamieniająca kolumny X/Y jeśli trzeba.
+# === Funkcje wczytywania danych ===
 def load_data(file_path: str, swap_xy: bool = False) -> Optional[pd.DataFrame]:
-    """
-    Wczytuje dane z pliku tekstowego lub Excel, automatycznie wykrywając separator.
-    swap_xy: jeśli True, zamienia kolumny X i Y po wczytaniu.
-    Dodatkowo zaokrągla współrzędne i wysokości do 2 miejsc zgodnie z regułą Bradissa-Kryłowa.
-    Jeśli plik ma 3 kolumny, pyta użytkownika o prefiks i nadaje automatyczną numerację punktów.
-    Jeśli liczba kolumn jest inna niż 3 lub 4, przerywa import z komunikatem.
-    Dodatkowo: jeśli po wczytaniu pliku jest tylko jedna kolumna, spróbuj ponownie z innymi separatorami.
-    """
     print(f"Wczytuję plik: {file_path}")
     try:
         file_ext = os.path.splitext(file_path)[1].lower()
@@ -145,489 +114,337 @@ def load_data(file_path: str, swap_xy: bool = False) -> Optional[pd.DataFrame]:
             except ImportError:
                 print(f"{Fore.RED}Błąd: Do obsługi plików Excel wymagany jest pakiet openpyxl. Zainstaluj go poleceniem: pip install openpyxl")
                 return None
-            df = df.dropna(axis=1, how='all')  # usuń puste kolumny
+            df = df.dropna(axis=1, how='all')
             df = handle_columns(df)
-            if df is None:
-                return None
-            if swap_xy:
-                if DEBUG_MODE:
-                    print(f"[DEBUG] Zamieniam kolumny X i Y dla pliku {file_path}")
-                df[['x', 'y']] = df[['y', 'x']]
-            for col in ['x', 'y', 'h']:
-                df[col] = pd.to_numeric(df[col], errors='coerce')
-                df[col] = df[col].apply(lambda v: round_bradis_krylov(v, 2) if pd.notnull(v) else v)
-                if DEBUG_MODE:
-                    print(f"[DEBUG] Kolumna {col} po zaokrągleniu: {df[col].tolist()}")
-            df.dropna(subset=['x', 'y', 'h'], inplace=True)
-            print(f"{Fore.GREEN}Plik Excel wczytany poprawnie ({len(df)} wierszy).")
-            return df
-        # Obsługa plików CSV/TXT
-        tried_separators = [';', ',', r'\s+']
-        for sep in tried_separators:
-            try:
-                if DEBUG_MODE:
-                    print(f"[DEBUG] Próbuję separator: '{sep}' dla pliku {file_path}")
-                df = pd.read_csv(file_path, sep=sep, header=None, on_bad_lines='skip', engine='python', dtype=str)
-                df = df.dropna(axis=1, how='all')  # usuń puste kolumny
-                # --- jeśli tylko jedna kolumna, spróbuj ponownie z innym separatorem ---
-                if len(df.columns) == 1:
+        else:
+            tried_separators = [';', ',', r'\s+']
+            df = None
+            for sep in tried_separators:
+                try:
+                    temp_df = pd.read_csv(file_path, sep=sep, header=None, on_bad_lines='skip', engine='python', dtype=str)
+                    temp_df = temp_df.dropna(axis=1, how='all')
+                    if len(temp_df.columns) > 1:
+                        df = temp_df
+                        sep_display = 'spacja/tab' if sep == r'\s+' else sep
+                        print(f"{Fore.GREEN}Plik wczytany poprawnie (separator: '{sep_display}').")
+                        break
+                except Exception:
                     continue
-                df = handle_columns(df)
-                if df is None:
-                    return None
-                if swap_xy:
-                    if DEBUG_MODE:
-                        print(f"[DEBUG] Zamieniam kolumny X i Y dla pliku {file_path}")
-                    df[['x', 'y']] = df[['y', 'x']]
-                for col in ['x', 'y', 'h']:
-                    df[col] = pd.to_numeric(df[col], errors='coerce')
-                    df[col] = df[col].apply(lambda v: round_bradis_krylov(v, 2) if pd.notnull(v) else v)
-                    if DEBUG_MODE:
-                        print(f"[DEBUG] Kolumna {col} po zaokrągleniu: {df[col].tolist()}")
-                df.dropna(subset=['x', 'y', 'h'], inplace=True)
-                sep_display = 'spacja/tab' if sep == r'\s+' else sep
-                print(f"{Fore.GREEN}Plik wczytany poprawnie (separator: '{sep_display}', {len(df)} wierszy).")
-                return df
-            except Exception as ex:
-                if DEBUG_MODE:
-                    print(f"[DEBUG] Błąd przy próbie separatora '{sep}': {ex}")
-                continue
-        # --- jeśli po wszystkich próbach nadal tylko jedna kolumna, zgłoś błąd ---
-        print(f"{Fore.RED}Nie udało się rozpoznać separatora lub plik nie ma poprawnej struktury (próbowano: {tried_separators}).")
-        return None
+            if df is None:
+                print(f"{Fore.RED}Nie udało się rozpoznać separatora lub plik nie ma poprawnej struktury.")
+                return None
+            df = handle_columns(df)
+        if df is None:
+            return None
+        if swap_xy:
+            df[['x', 'y']] = df[['y', 'x']]
+        for col in ['x', 'y', 'h']:
+            df[col] = pd.to_numeric(df[col], errors='coerce')
+        df.dropna(subset=['x', 'y', 'h'], inplace=True)
+        print(f"Wczytano {len(df)} wierszy.")
+        return df
     except Exception as e:
         print(f"{Fore.RED}Błąd podczas wczytywania pliku: {e}")
         return None
 
-# Funkcja sprawdzająca, czy podana współrzędna ma strukturę Eastingu w układzie PL-2000.
 def has_easting_structure(coord: float) -> bool:
-    """Sprawdza, czy podana współrzędna ma strukturę Easting w układzie PL-2000."""
     try:
         coord_str = str(int(coord))
-        # Easting w PL-2000 ma 7 cyfr i zaczyna się od 5, 6, 7 lub 8
         return len(coord_str) == 7 and coord_str[0] in ['5', '6', '7', '8']
     except (ValueError, TypeError, IndexError):
         return False
 
-# Funkcja przypisująca kolumnom odpowiednie role geodezyjne (Northing/Easting) na podstawie analizy danych.
 def assign_geodetic_roles(df: pd.DataFrame) -> pd.DataFrame:
-    """
-    Analizuje dane i przypisuje im role geodezyjne (Northing, Easting).
-    Inteligentnie wykrywa, czy plik źródłowy używa konwencji:
-    - Geodezyjnej (X = Northing, Y = Easting)
-    - GIS (X = Easting, Y = Northing)
-    i tworzy nowe kolumny `geodetic_northing` i `geodetic_easting` do dalszego użytku.
-    """
     if df.empty:
         return df
-    if DEBUG_MODE:
-        print(f"{Fore.MAGENTA}[DEBUG] Sprawdzam konwencję współrzędnych w pliku...{Style.RESET_ALL}")
-
     first_row = df.iloc[0]
-    x_from_file, y_from_file = first_row['x'], first_row['y']
-
-    if has_easting_structure(y_from_file):
-        if DEBUG_MODE:
-            print(f"{Fore.MAGENTA}[DEBUG] WYKRYTO: Kolumna 'y' z pliku ma strukturę Easting. Przyjmuję, że plik ma układ geodezyjny (X=Northing, Y=Easting).{Style.RESET_ALL}")
-        df['geodetic_northing'] = df['x']
-        df['geodetic_easting'] = df['y']
-    elif has_easting_structure(x_from_file):
-        if DEBUG_MODE:
-            print(f"{Fore.MAGENTA}[DEBUG] WYKRYTO: Kolumna 'x' z pliku ma strukturę Easting. Przyjmuję, że plik ma układ GIS (X=Easting, Y=Northing).{Style.RESET_ALL}")
-        df['geodetic_northing'] = df['y']
-        df['geodetic_easting'] = df['x']
+    if has_easting_structure(first_row['y']):
+        df['geodetic_northing'], df['geodetic_easting'] = df['x'], df['y']
+    elif has_easting_structure(first_row['x']):
+        df['geodetic_northing'], df['geodetic_easting'] = df['y'], df['x']
     else:
-        if DEBUG_MODE:
-            print(f"{Fore.YELLOW}[DEBUG-OSTRZEŻENIE] Nie można jednoznacznie zidentyfikować struktury Easting. Zakładam domyślny układ geodezyjny (X=Northing, Y=Easting).{Style.RESET_ALL}")
-        df['geodetic_northing'] = df['x']
-        df['geodetic_easting'] = df['y']
+        df['geodetic_northing'], df['geodetic_easting'] = df['x'], df['y']
     return df
 
-# Funkcja określająca kod EPSG strefy układu PL-2000 na podstawie współrzędnej Easting.
 def get_source_epsg(easting_coordinate: float) -> Optional[int]:
-    """Określa kod EPSG strefy układu PL-2000 na podstawie współrzędnej Easting."""
     try:
         easting_str = str(int(easting_coordinate))
         if len(easting_str) == 7:
-            first_digit = easting_str[0]
-            epsg_mapping = {'5': 2176, '6': 2177, '7': 2178, '8': 2179}
-            return epsg_mapping.get(first_digit)
+            return {'5': 2176, '6': 2177, '7': 2178, '8': 2179}.get(easting_str[0])
     except (ValueError, TypeError, IndexError):
         return None
     return None
 
-# Funkcja zaokrąglająca liczbę zgodnie z regułą Bradissa-Kryłowa (bankers' rounding).
-def round_bradis_krylov(value: float, ndigits: int = 2) -> float:
-    """
-    Zaokrągla liczbę zgodnie z regułą Bradissa-Kryłowa (bankers' rounding):
-    - Jeśli cyfra po ostatniej zachowywanej jest 5 i dalej same zera, zaokrągla do parzystej.
-    - W pozostałych przypadkach klasycznie.
-    """
-    return round(value, ndigits)
+# === NOWE FUNKCJE ROBOCZE DLA RÓWNOLEGŁOŚCI ===
+def worker_transform(point_data: Tuple[float, float]) -> Optional[Tuple[float, float]]:
+    northing, easting = point_data
+    source_epsg = get_source_epsg(easting)
+    if source_epsg is None:
+        return None
+    try:
+        transformer = Transformer.from_crs(f"EPSG:{source_epsg}", "EPSG:2180", always_xy=True)
+        x_out, y_out = transformer.transform(easting, northing)
+        return x_out, y_out
+    except CRSError:
+        return None
 
-# Funkcja transformująca współrzędne z układu PL-2000 do PL-1992 (EPSG:2180).
-def transform_coordinates(df: pd.DataFrame) -> List[Tuple[float, float]]:
-    """Transformuje współrzędne z układu PL-2000 do PL-1992 (EPSG:2180) i zaokrągla do 2 miejsc zgodnie z regułą Bradissa-Kryłowa. Dodano pasek postępu."""
-    transformed_points = []  # Lista na przetransformowane punkty
-    print(f"\n{Fore.CYAN}Transformuję współrzędne z PL-2000 do PL-1992 (EPSG:2180)...{Style.RESET_ALL}")
-    total_points = len(df)
-    bar_length = 40  # Długość paska postępu
-    for idx, (row_idx, row) in enumerate(df.iterrows()):
-        northing = row['geodetic_northing']
-        easting = row['geodetic_easting']
-        source_epsg = get_source_epsg(easting)
-        if source_epsg is None:
-            if DEBUG_MODE:
-                print(f"[DEBUG] Nie można określić strefy EPSG dla ptk {row.id} (Easting={easting})")
-            transformed_points.append((0.0, 0.0)) 
-            # Pasek postępu
-            progress = (idx + 1) / total_points
-            block = int(round(bar_length * progress))
-            text = f"\rTransformacja: [{'#' * block}{'-' * (bar_length - block)}] {int(progress * 100)}%"
-            sys.stdout.write(text)
-            sys.stdout.flush()
-            continue
-        transformer = Transformer.from_crs(f"EPSG:{source_epsg}", "EPSG:2180")
-        x_gis_easting, y_gis_northing = transformer.transform(northing, easting)
-        x_gis_easting = round_bradis_krylov(x_gis_easting, 2)
-        y_gis_northing = round_bradis_krylov(y_gis_northing, 2)
-        if DEBUG_MODE:
-            print(f"[DEBUG] {row.id}: ({northing}, {easting}) EPSG:{source_epsg} -> ({x_gis_easting}, {y_gis_northing}) EPSG:2180")
-        transformed_points.append((x_gis_easting, y_gis_northing))
-        # Pasek postępu
-        progress = (idx + 1) / total_points
-        block = int(round(bar_length * progress))
-        text = f"\rTransformacja: [{'#' * block}{'-' * (bar_length - block)}] {int(progress * 100)}%"
-        sys.stdout.write(text)
-        sys.stdout.flush()
-    print("\n" + f"{Fore.GREEN}Transformacja zakończona.{Style.RESET_ALL}")
-    return transformed_points
+# Flagi do jednorazowego logowania adresu URL i odpowiedzi Geoportalu
+_geoportal_url_logged = False
+_geoportal_response_logged = False
 
-# Funkcja pobierająca wysokości dla listy punktów z API Geoportalu w paczkach po 300 punktów.
-def get_geoportal_heights(transformed_points: List[Tuple[float, float]]) -> Dict[str, float]:
-    """
-    Pobiera wysokości dla listy punktów z API Geoportalu w paczkach po 300 punktów.
-    Zwraca słownik: klucz = 'easting northing' (zaokrąglone do 2 miejsc), wartość = wysokość.
-    """
-    print(f"\n{Fore.CYAN}Pobieranie danych wysokościowych z Geoportalu...{Style.RESET_ALL}")
-    valid_points = [p for p in transformed_points if p != (0.0, 0.0)]
+def fetch_height_batch(batch: List[Tuple[float, float]]) -> Dict[str, float]:
+    global _geoportal_url_logged, _geoportal_response_logged
+    if not batch:
+        debug_log("Pusta partia punktów do pobrania wysokości z Geoportalu.")
+        return {}
+    # Loguj tylko pierwszy wpis z partii
+    if batch:
+        easting, northing = batch[0]
+        debug_log(f"[1/len={len(batch)}] Współrzędne wysyłane do Geoportalu: ({easting:.2f},{northing:.2f}) ... (reszta pominięta)")
+    # Zamiana X z Y i konstruowanie listy zgodnie z dokumentacją (spacja, dwie cyfry po przecinku)
+    point_strings = [f"{northing:.2f} {easting:.2f}" for easting, northing in batch]
+    list_parameter = ",".join(point_strings)
+    url = f"https://services.gugik.gov.pl/nmt/?request=GetHByPointList&list={list_parameter}"
+    # Loguj tylko pierwszy wysłany adres URL
+    if not _geoportal_url_logged:
+        debug_log(f"Wysyłam zapytanie do Geoportalu: {url}")
+        _geoportal_url_logged = True
+    try:
+        response = requests.get(url, timeout=30)
+        # Loguj tylko pierwszą odpowiedź
+        if not _geoportal_response_logged:
+            debug_log(f"Odpowiedź status: {response.status_code}, tekst: {response.text[:200]}")
+            _geoportal_response_logged = True
+        response.raise_for_status()
+        batch_heights = {}
+        if response.text.strip():
+            results = response.text.strip().split(',')
+            for line in results:
+                parts = line.strip().split()
+                if len(parts) == 3:
+                    northing_api, easting_api, h_api = parts
+                    key = f"{northing_api} {easting_api}"
+                    batch_heights[key] = float(h_api)
+        debug_log(f"Pobrano {len(batch_heights)} wysokości z Geoportalu dla partii {len(batch)} punktów.")
+        return batch_heights
+    except requests.exceptions.RequestException as e:
+        debug_log(f"Błąd komunikacji z API: {e}")
+        print(f"{Fore.RED}Błąd komunikacji z API: {e}")
+        return {}
+
+# === ZAKTUALIZOWANE FUNKCJE GEOPRZETWARZANIA ===
+def transform_coordinates_parallel(df: pd.DataFrame) -> List[Optional[Tuple[float, float]]]:
+    print(f"\n{Fore.CYAN}Transformuję współrzędne (równolegle)...{Style.RESET_ALL}")
+    points_to_transform = list(zip(df['geodetic_northing'], df['geodetic_easting']))
+    if points_to_transform:
+        debug_log(f"[1/len={len(points_to_transform)}] Transformuję punkt: ({points_to_transform[0][0]:.2f}, {points_to_transform[0][1]:.2f}) ... (reszta pominięta)")
+    with multiprocessing.Pool() as pool:
+        results = list(tqdm(pool.imap(worker_transform, points_to_transform, chunksize=100), 
+                            total=len(points_to_transform), desc="Transformacja współrzędnych"))
+    debug_log(f"Zakończono transformację współrzędnych. Wyników: {len(results)}")
+    return results
+
+def get_geoportal_heights_concurrent(transformed_points: List[Optional[Tuple[float, float]]]) -> Dict[str, float]:
+    print(f"\n{Fore.CYAN}Pobieranie danych z Geoportalu (równolegle)...{Style.RESET_ALL}")
+    valid_points = [p for p in transformed_points if p is not None]
+    debug_log(f"Liczba poprawnych punktów do pobrania wysokości: {len(valid_points)}")
     if not valid_points:
         print(f"{Fore.YELLOW}Brak poprawnych punktów do wysłania do API Geoportalu.")
         return {}
-    geoportal_heights = {}
-    batch_size = 300  # Limit API Geoportalu na jedno zapytanie
-    total = len(valid_points)
-    for start in range(0, total, batch_size):
-        batch = valid_points[start:start+batch_size]
-        point_strings = [f"{easting:.2f} {northing:.2f}" for easting, northing in batch]
-        list_parameter = ",".join(point_strings)
-        url = f"https://services.gugik.gov.pl/nmt/?request=GetHByPointList&list={list_parameter}"
-        if DEBUG_MODE:
-            print(f"[DEBUG] Wysyłam zapytanie do Geoportalu: {url}")
-        try:
-            response = requests.get(url, timeout=30)
-            if DEBUG_MODE:
-                print(f"[DEBUG] Odpowiedź status: {response.status_code}")
-                print(f"[DEBUG] Odpowiedź tekst: {response.text[:200]}{'...' if len(response.text) > 200 else ''}")
-            response.raise_for_status()
-            if response.text.strip():
-                results = response.text.strip().split(',')
-                for point_result in results:
-                    parts = point_result.split()
-                    if len(parts) == 3:
-                        easting_api, northing_api, h_api = parts
-                        key = f"{float(easting_api):.2f} {float(northing_api):.2f}"
-                        geoportal_heights[key] = float(h_api)
-                        if DEBUG_MODE:
-                            print(f"[DEBUG] Odpowiedź API: {key} -> {h_api}")
-            print(f"{Fore.GREEN}Pobrano dane wysokościowe dla paczki {start+1}-{min(start+batch_size, total)} z {total} punktów.{Style.RESET_ALL}")
-        except requests.exceptions.RequestException as e:
-            print(f"{Fore.RED}Błąd podczas komunikacji z Geoportalem (paczka {start+1}-{min(start+batch_size, total)}): {e}")
-    return geoportal_heights
+    batch_size = 300
+    batches = [valid_points[i:i + batch_size] for i in range(0, len(valid_points), batch_size)]
+    debug_log(f"Liczba partii do pobrania: {len(batches)} (po {batch_size} punktów)")
+    all_heights = {}
+    with ThreadPoolExecutor(max_workers=CONCURRENT_API_REQUESTS) as executor:
+        results = list(tqdm(executor.map(fetch_height_batch, batches), 
+                            total=len(batches), desc="Pobieranie z Geoportalu"))
+    for batch_result in results:
+        all_heights.update(batch_result)
+    debug_log(f"Łącznie pobrano wysokości dla {len(all_heights)} punktów z Geoportalu.")
+    return all_heights
 
+# === Funkcje zapisu i przetwarzania ===
 def export_to_geopackage(results_df: pd.DataFrame, input_df: pd.DataFrame, gpkg_path: str, layer_name: str = "wyniki"):
-    """
-    Eksportuje DataFrame do pliku GeoPackage (.gpkg), który jest czytelny dla QGIS.
-    - Automatycznie tworzy geometrię punktową z kolumn x_odniesienia, y_odniesienia.
-    - Wykrywa układ współrzędnych (CRS) na podstawie danych wejściowych.
-    - Dodaje kolumnę 'eksport' typu bool (domyślnie True).
-    """
     if results_df.empty:
         print(f"{Fore.YELLOW}Brak danych do zapisu w GeoPackage.")
         return
-
-    # Krok 1: Wykryj CRS na podstawie pierwszego punktu w pliku wejściowym
     source_epsg = None
     if not input_df.empty:
         first_point_easting = input_df.iloc[0]['geodetic_easting']
         source_epsg = get_source_epsg(first_point_easting)
-
     if source_epsg is None:
-        print(f"{Fore.RED}Błąd: Nie można było ustalić źródłowego układu współrzędnych (EPSG) dla pliku wejściowego.")
-        print(f"{Fore.YELLOW}Plik GeoPackage nie zostanie utworzony.")
+        print(f"{Fore.RED}Błąd: Nie można było ustalić źródłowego układu współrzędnych (EPSG). Plik GeoPackage nie zostanie utworzony.")
         return
-
     print(f"Wykryto układ współrzędnych dla pliku GeoPackage: EPSG:{source_epsg}")
-
-    # Krok 2: Przygotuj dane do konwersji
-    df_geo = results_df.copy()
-    df_geo['eksport'] = True
-    df_geo = df_geo.where(pd.notnull(df_geo), None)
-
-    # Krok 3: Utwórz GeoDataFrame
     try:
-        # Zamieniono kolejność kolumn, aby dopasować się do konwencji GIS (x=Easting, y=Northing).
-        # W danych wejściowych 'y_odniesienia' to Easting, a 'x_odniesienia' to Northing.
+        df_geo = results_df.copy()
+        # Dodaj/aktualizuj kolumnę 'eksport' zgodnie z warunkiem dokładności
+        if 'osiaga_dokladnosc' in df_geo.columns:
+            df_geo['eksport'] = df_geo['osiaga_dokladnosc'].apply(lambda x: True if str(x).strip().lower() == 'tak' else False)
+        else:
+            df_geo['eksport'] = True
         geometry = gpd.points_from_xy(df_geo['y_odniesienia'], df_geo['x_odniesienia'])
         gdf = gpd.GeoDataFrame(df_geo, geometry=geometry, crs=f"EPSG:{source_epsg}")
-
-        # Krok 4: Zapisz do pliku GeoPackage
+        # 1. Eksport całościowy
         gdf.to_file(gpkg_path, layer=layer_name, driver="GPKG")
         print(f"{Fore.GREEN}Wyniki zostały poprawnie zapisane w bazie przestrzennej: {os.path.abspath(gpkg_path)}{Style.RESET_ALL}")
-
+        # 2. Eksport tylko spełniających warunek dokładności
+        gdf_ok = gdf[gdf['eksport']]
+        if not gdf_ok.empty:
+            gdf_ok.to_file(gpkg_path.replace('.gpkg', '_dokladne.gpkg'), layer=layer_name, driver="GPKG")
+            print(f"{Fore.GREEN}Wyniki spełniające warunek dokładności zapisano w: {os.path.abspath(gpkg_path.replace('.gpkg', '_dokladne.gpkg'))}{Style.RESET_ALL}")
+        else:
+            print(f"{Fore.YELLOW}Brak punktów spełniających warunek dokładności do eksportu.")
+        # 3. Eksport niespełniających warunku dokładności
+        gdf_nok = gdf[~gdf['eksport']]
+        if not gdf_nok.empty:
+            gdf_nok.to_file(gpkg_path.replace('.gpkg', '_niedokladne.gpkg'), layer=layer_name, driver="GPKG")
+            print(f"{Fore.GREEN}Wyniki niespełniające warunku dokładności zapisano w: {os.path.abspath(gpkg_path.replace('.gpkg', '_niedokladne.gpkg'))}{Style.RESET_ALL}")
+        else:
+            print(f"{Fore.YELLOW}Brak punktów niespełniających warunku dokładności do eksportu.")
     except Exception as e:
         print(f"{Fore.RED}Wystąpił błąd podczas tworzenia pliku GeoPackage: {e}")
 
-
-# Główna funkcja przetwarzająca dane, wykonująca transformacje i porównania.
 def process_data(input_df: pd.DataFrame, 
                 comparison_df: Optional[pd.DataFrame], 
                 use_geoportal: bool,
                 max_distance: float,
                 geoportal_tolerance: Optional[float] = None) -> pd.DataFrame:
-    """Główna funkcja przetwarzająca dane, wykonująca transformacje i porównania."""
-    results = []  # Lista na wyniki końcowe
-    total_points = len(input_df)
-    if DEBUG_MODE:
-        print(f"[DEBUG] Rozpoczynam przetwarzanie {total_points} punktów.")
-    # Zachowujemy oryginalne współrzędne do dalszego porównania
-    input_df['x_oryginal'] = input_df['x']
-    input_df['y_oryginal'] = input_df['y']
+    debug_log(f"Rozpoczynam przetwarzanie danych. use_geoportal={use_geoportal}, max_distance={max_distance}, geoportal_tolerance={geoportal_tolerance}")
+    results = []
     input_df = assign_geodetic_roles(input_df)
+    
     geoportal_heights, transformed_points = {}, []
-    # Jeśli wybrano porównanie z Geoportalem, wykonujemy transformację i pobieramy wysokości
     if use_geoportal:
-        transformed_points = transform_coordinates(input_df)
+        debug_log("Transformuję współrzędne wejściowe do układu 2180 na potrzeby Geoportalu...")
+        transformed_points = transform_coordinates_parallel(input_df)
         if transformed_points:
-            geoportal_heights = get_geoportal_heights(transformed_points)
-    tree_input, tree_comparison = None, None
-    # Jeśli wybrano porównanie z drugim plikiem, przygotowujemy KDTree do szybkiego wyszukiwania najbliższych punktów
-    if comparison_df is not None:
-        print(f"\n{Fore.CYAN}Przygotowuję zaawansowane parowanie punktów...{Style.RESET_ALL}")
-        comparison_df['x_oryginal'] = comparison_df['x']
-        comparison_df['y_oryginal'] = comparison_df['y']
-        input_points = input_df[['x_oryginal', 'y_oryginal']].values
-        comparison_points = comparison_df[['x_oryginal', 'y_oryginal']].values
-        tree_input = KDTree(input_points)
+            debug_log("Pobieram wysokości z Geoportalu...")
+            geoportal_heights = get_geoportal_heights_concurrent(transformed_points)
+        else:
+            debug_log("Brak przetransformowanych punktów do pobrania wysokości z Geoportalu!")
+    
+    tree_comparison = None
+    if comparison_df is not None and not comparison_df.empty:
+        print(f"\n{Fore.CYAN}Przygotowuję indeks przestrzenny...{Style.RESET_ALL}")
+        comparison_points = comparison_df[['x', 'y']].values
         tree_comparison = KDTree(comparison_points)
-        print(f"{Fore.GREEN}Indeksy do porównania gotowe.{Style.RESET_ALL}")
-    paired_count = 0  # Licznik sparowanych punktów
-    print(f"\n{Fore.CYAN}Przetwarzam punkty...{Style.RESET_ALL}")
-    for i, (_, point) in enumerate(input_df.iterrows()):
-        # Tworzymy słownik na dane wyjściowe dla każdego punktu
+        print(f"{Fore.GREEN}Indeks gotowy.{Style.RESET_ALL}")
+        
+    paired_count = 0
+    
+    for i, (_, point) in enumerate(tqdm(input_df.iterrows(), total=len(input_df), desc="Przetwarzanie punktów")):
         row_data = {
-            'id_odniesienia': point['id'],
-            'x_odniesienia': point['x_oryginal'],
-            'y_odniesienia': point['y_oryginal'],
-            'h_odniesienia': point['h'],
+            'id_odniesienia': point['id'], 'x_odniesienia': point['x'],
+            'y_odniesienia': point['y'], 'h_odniesienia': point['h'],
         }
-        # Parowanie punktów z plikiem porównawczym (jeśli wybrano)
-        diff_h = None
-        if comparison_df is not None and tree_comparison is not None and tree_input is not None:
-            distance, nearest_idx_in_comp = tree_comparison.query([point['x_oryginal'], point['y_oryginal']])
-            is_within_distance = (max_distance == 0) or (distance <= max_distance)
-            if DEBUG_MODE:
-                print(f"[DEBUG] Punkt {i}: szukam najbliższego w porównawczym, dystans={distance}, idx={nearest_idx_in_comp}, warunek dystansu={is_within_distance}")
-            if is_within_distance:
-                nearest_in_comp_point = comparison_df.iloc[nearest_idx_in_comp]
-                _, nearest_idx_in_input = tree_input.query([nearest_in_comp_point['x_oryginal'], nearest_in_comp_point['y_oryginal']])
-                is_reciprocal = (i == nearest_idx_in_input)
-                if DEBUG_MODE:
-                    print(f"[DEBUG] Punkt {i}: wzajemność={is_reciprocal}, idx_back={nearest_idx_in_input}")
-                if is_reciprocal:
-                    row_data['id_porownania'] = nearest_in_comp_point['id']
-                    row_data['x_porownania'] = nearest_in_comp_point['x_oryginal']
-                    row_data['y_porownania'] = nearest_in_comp_point['y_oryginal']
-                    row_data['h_porownania'] = nearest_in_comp_point['h']
-                    # Różnica wysokości odniesienia - porównania
+        # Loguj tylko pierwszy punkt
+        if i == 0:
+            debug_log(f"[1/len={len(input_df)}] Przetwarzam punkt: {row_data} ... (reszta pominięta)")
+        # POPRAWKA BŁĘDU 1: Dodano jawne sprawdzenie `comparison_df is not None`
+        if tree_comparison is not None and comparison_df is not None:
+            distance, nearest_idx = tree_comparison.query([point['x'], point['y']])
+            if (max_distance == 0) or (distance <= max_distance):
+                # Teraz Pylance wie, że `comparison_df.iloc` jest bezpieczne
+                nearest_in_comp_point = comparison_df.iloc[nearest_idx]
+                row_data.update({
+                    'id_porownania': nearest_in_comp_point['id'],
+                    'x_porownania': nearest_in_comp_point['x'],
+                    'y_porownania': nearest_in_comp_point['y'],
+                    'h_porownania': nearest_in_comp_point['h'],
+                    'odleglosc_pary': distance
+                })
+                try:
+                    row_data['diff_h'] = float(point['h']) - float(nearest_in_comp_point['h'])
+                except (ValueError, TypeError):
+                    row_data['diff_h'] = 'brak_danych'
+                paired_count += 1
+                
+        # POPRAWKA BŁĘDU 2: Rozbicie warunku na dwa kroki
+        if use_geoportal and i < len(transformed_points):
+            transformed_point = transformed_points[i]
+            if transformed_point is not None:
+                easting_2180, northing_2180 = transformed_point
+                # lookup_key w formacie 'Y X' z dwoma miejscami po przecinku
+                lookup_key = f"{northing_2180:.2f} {easting_2180:.2f}"
+                height = geoportal_heights.get(lookup_key, "brak_danych")
+                if i == 0:
+                    debug_log(f"Punkt {i}: lookup_key={lookup_key}, geoportal_h={height} ... (reszta lookup_key pominięta)")
+                row_data['geoportal_h'] = str(height)
+                
+                if height != 'brak_danych' and pd.notnull(point['h']):
                     try:
-                        diff_h = float(point['h']) - float(nearest_in_comp_point['h'])
-                    except Exception:
-                        diff_h = 'brak_danych'
-                    row_data['diff_h'] = diff_h
-                    row_data['odleglosc_pary'] = distance
-                    paired_count += 1
-        # Pobieranie wysokości z Geoportalu (jeśli wybrano)
-        if use_geoportal and transformed_points:
-            easting_2180, northing_2180 = transformed_points[i]
-            lookup_key = f"{easting_2180:.2f} {northing_2180:.2f}"
-            height = geoportal_heights.get(lookup_key, "brak_danych")
-            row_data['geoportal_h'] = str(height)
-            # Dodaj różnicę h_odniesienia - geoportal_h
-            if height != 'brak_danych' and point['h'] is not None:
-                try:
-                    diff_h_geoportal = float(point['h']) - float(height)
-                except Exception:
-                    diff_h_geoportal = 'brak_danych'
-            else:
-                diff_h_geoportal = 'brak_danych'
-            row_data['diff_h_geoportal'] = diff_h_geoportal
-            # Sprawdzenie tolerancji
-            if geoportal_tolerance is not None and diff_h_geoportal != 'brak_danych':
-                try:
-                    is_within = abs(float(diff_h_geoportal)) <= geoportal_tolerance
-                except Exception:
-                    is_within = False
-                row_data['osiaga_dokladnosc'] = 'Tak' if is_within else 'Nie'
+                        diff_h_geoportal = round(float(point['h']) - float(height), 2)
+                        row_data['diff_h_geoportal'] = diff_h_geoportal
+                        if i == 0:
+                            debug_log(f"Obliczam diff_h_geoportal: {point['h']} (punkt) - {height} (geoportal) = {diff_h_geoportal}")
+                        if geoportal_tolerance is not None:
+                            row_data['osiaga_dokladnosc'] = 'Tak' if abs(diff_h_geoportal) <= geoportal_tolerance else 'Nie'
+                    except (ValueError, TypeError):
+                        row_data['diff_h_geoportal'] = 'brak_danych'
+                else:
+                    row_data['diff_h_geoportal'] = 'brak_danych'
+                
         results.append(row_data)
-        # Pasek postępu w konsoli
-        progress = (i + 1) / total_points
-        bar_length = 40
-        block = int(round(bar_length * progress))
-        text = f"\rPrzetworzono {i+1}/{total_points} punktów: [{'#' * block}{'-' * (bar_length - block)}] {int(progress * 100)}%"
-        sys.stdout.write(text)
-        sys.stdout.flush()
-    print("\n")
+
     if comparison_df is not None:
         print(f"{Fore.GREEN}Znaleziono i połączono {paired_count} par punktów.{Style.RESET_ALL}")
-    # Przestawianie kolumn w odpowiedniej kolejności
+        
     results_df = pd.DataFrame(results)
-    if comparison_df is not None:
-        # Wstawiamy diff_h przed odleglosc_pary
-        cols = list(results_df.columns)
-        if 'diff_h' in cols and 'odleglosc_pary' in cols:
-            cols.remove('diff_h')
-            idx = cols.index('odleglosc_pary')
-            cols.insert(idx, 'diff_h')
-        if use_geoportal and 'diff_h_geoportal_pair' in cols and 'odleglosc_pary' in cols:
-            cols.remove('diff_h_geoportal_pair')
-            idx = cols.index('odleglosc_pary') + 1
-            cols.insert(idx, 'diff_h_geoportal_pair')
-        if 'diff_h_geoportal' in cols and 'h_odniesienia' in cols:
-            cols.remove('diff_h_geoportal')
-            idx = cols.index('h_odniesienia') + 1
-            cols.insert(idx, 'diff_h_geoportal')
-        if 'osiaga_dokladnosc' in cols:
-            cols.remove('osiaga_dokladnosc')
-            cols.append('osiaga_dokladnosc')
-        results_df = results_df[cols]
-    else:
-        # Wstawiamy diff_h_geoportal po h_odniesienia
-        cols = list(results_df.columns)
-        if 'diff_h_geoportal' in cols and 'h_odniesienia' in cols:
-            cols.remove('diff_h_geoportal')
-            idx = cols.index('h_odniesienia') + 1
-            cols.insert(idx, 'diff_h_geoportal')
-        if 'osiaga_dokladnosc' in cols:
-            cols.remove('osiaga_dokladnosc')
-            cols.append('osiaga_dokladnosc')
-        results_df = results_df[cols]
-    # --- sortowanie wyników według różnicy wysokości geoportalu (malejąco) ---
+    
     if use_geoportal and 'diff_h_geoportal' in results_df.columns:
-        # Funkcja pomocnicza do obsługi wartości 'brak_danych'
-        def abs_or_nan(value):
-            try:
-                return abs(float(value))
-            except Exception:
-                return float('-inf')  # brak_danych na końcu
-        results_df = results_df.copy()
-        results_df['__abs_diff_h_geoportal'] = results_df['diff_h_geoportal'].apply(abs_or_nan)
-        results_df = results_df.sort_values(by='__abs_diff_h_geoportal', ascending=False)
-        results_df = results_df.drop(columns=['__abs_diff_h_geoportal'])
-    return results_df
+        results_df['__abs_diff_h_geoportal'] = pd.to_numeric(results_df['diff_h_geoportal'], errors='coerce').abs()
+        results_df = results_df.sort_values(by='__abs_diff_h_geoportal', ascending=False).drop(columns=['__abs_diff_h_geoportal'])
+    
+    final_cols = ['id_odniesienia', 'x_odniesienia', 'y_odniesienia', 'h_odniesienia', 'diff_h_geoportal', 'geoportal_h', 'osiaga_dokladnosc', 'id_porownania', 'x_porownania', 'y_porownania', 'h_porownania', 'diff_h', 'odleglosc_pary']
+    existing_cols = [col for col in final_cols if col in results_df.columns]
+    return results_df[existing_cols]
 
 # === Główna funkcja programu ===
 def main():
-    """
-    Główna funkcja programu, która steruje całym procesem:
-    1. Wyświetla ekran powitalny i pobiera dane od użytkownika.
-    2. Wczytuje pliki z danymi.
-    3. Przetwarza dane zgodnie z wybranym trybem.
-    4. Zapisuje wyniki do pliku CSV i GeoPackage.
-    """
     clear_screen()
     display_welcome_screen()
-    # Krok 1: Pobranie danych od użytkownika
     choice = get_user_choice()
-    max_distance = 0.0
-    if choice in [1, 3]:
-        max_distance = get_max_distance()
+    max_distance = get_max_distance() if choice in [1, 3] else 0.0
     input_file = get_file_path("\nPodaj ścieżkę do pliku wejściowego: ")
     swap_input = ask_swap_xy("wejściowego")
+    
     comparison_file = None
-    swap_comparison = False
-    geoportal_tolerance = None
+    swap_comparison = False  # Inicjalizacja zmiennej
     if choice in [1, 3]:
         comparison_file = get_file_path("Podaj ścieżkę do pliku porównawczego: ")
         swap_comparison = ask_swap_xy("porównawczego")
-    if choice in [2, 3]:
-        geoportal_tolerance = get_geoportal_tolerance()
-    # Krok 2: Wczytanie danych z plików
+        
+    geoportal_tolerance = get_geoportal_tolerance() if choice in [2, 3] else None
+        
     print(f"\n{Fore.CYAN}--- Wczytywanie danych ---{Style.RESET_ALL}")
     input_df = load_data(input_file, swap_input)
     if input_df is None or input_df.empty:
         print(f"{Fore.RED}Nie udało się wczytać danych wejściowych. Zamykanie programu.")
         return
-    comparison_df = None
-    if comparison_file:
-        comparison_df = load_data(comparison_file, swap_comparison)
-    # Krok 3: Główna logika przetwarzania
-    use_geoportal = choice in [2, 3]
-    results_df = process_data(input_df, comparison_df, use_geoportal, max_distance, geoportal_tolerance)
+        
+    comparison_df = load_data(comparison_file, swap_comparison) if comparison_file else None
+        
+    results_df = process_data(input_df, comparison_df, choice in [2, 3], max_distance, geoportal_tolerance)
     
-    # Krok 4: Zapis wyników
     if not results_df.empty:
         print(f"\n{Fore.CYAN}--- Zapisywanie wyników ---{Style.RESET_ALL}")
-        
-        # --- Zapis do pliku CSV (bez zmian) ---
         output_csv_file = 'wynik.csv'
-        output_columns = ['id_odniesienia', 'x_odniesienia', 'y_odniesienia', 'h_odniesienia']
-        if 'diff_h_geoportal' in results_df.columns:
-            output_columns.append('diff_h_geoportal')
-        if 'id_porownania' in results_df.columns:
-            output_columns.extend(['id_porownania', 'x_porownania', 'y_porownania', 'h_porownania'])
-            if 'diff_h' in results_df.columns:
-                output_columns.append('diff_h')
-            if 'odleglosc_pary' in results_df.columns:
-                output_columns.append('odleglosc_pary')
-            if 'diff_h_geoportal_pair' in results_df.columns:
-                output_columns.append('diff_h_geoportal_pair')
-        if 'geoportal_h' in results_df.columns:
-            output_columns.append('geoportal_h')
-        if 'osiaga_dokladnosc' in results_df.columns:
-            output_columns.append('osiaga_dokladnosc')
-        
-        results_df.to_csv(
-            output_csv_file, 
-            sep=';', 
-            index=False, 
-            columns=output_columns,
-            float_format='%.2f',
-            na_rep='brak_danych'
-        )
-        print(f"{Fore.GREEN}Wyniki tabelaryczne zostały zapisane w pliku: {os.path.abspath(output_csv_file)}{Style.RESET_ALL}")
-
-        # Zapis do bazy GeoPackage
+        results_df.to_csv(output_csv_file, sep=';', index=False, float_format='%.2f', na_rep='brak_danych')
+        print(f"{Fore.GREEN}Wyniki tabelaryczne zapisano w: {os.path.abspath(output_csv_file)}{Style.RESET_ALL}")
         output_gpkg_file = 'wynik.gpkg'
         export_to_geopackage(results_df, input_df, output_gpkg_file)
-        
         print(f"\n{Fore.GREEN}Zakończono przetwarzanie pomyślnie!")
     else:
         print(f"{Fore.YELLOW}Nie wygenerowano żadnych wyników.")
 
-# === Punkt startowy programu ===
 if __name__ == "__main__":
     try:
         main()
-    # Obsługa przerwania programu przez użytkownika (Ctrl+C)
     except KeyboardInterrupt:
         print(f"\n{Fore.YELLOW}Przerwano działanie programu.{Style.RESET_ALL}")
-    # Obsługa wszystkich innych, nieprzewidzianych błędów
     except Exception as e:
         print(f"\n{Fore.RED}Wystąpił nieoczekiwany błąd globalny: {e}")
-        import traceback
         traceback.print_exc()
     finally:
-        # Zapewnienie, że okno konsoli nie zamknie się natychmiast po zakończeniu
-        print("\nNaciśnij Enter, aby zakończyć...")
-        input()
+        input("\nNaciśnij Enter, aby zakończyć...")

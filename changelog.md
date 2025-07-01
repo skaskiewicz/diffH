@@ -6,6 +6,39 @@ Format bazuje na [Keep a Changelog](https://keepachangelog.com/en/1.0.0/), a pro
 
 ---
 
+## [1.2.0] - 2025-07-01
+
+### Dodano
+
+* Eksport wyników do trzech plików GeoPackage (GPKG):
+    * `wynik.gpkg` – wszystkie punkty,
+    * `wynik_dokladne.gpkg` – tylko punkty spełniające warunek dokładnościowy,
+    * `wynik_niedokladne.gpkg` – tylko punkty niespełniające warunku dokładnościowego.
+* Kolumna `eksport` w plikach GPKG – logiczna flaga (True/False) informująca, czy punkt spełnia warunek dokładnościowy.
+* Automatyczne usuwanie cudzysłowów lub apostrofów otaczających ścieżkę pliku przy wczytywaniu (przeciąganie pliku z Eksploratora Windows).
+
+### Zmieniono
+
+* Szczegółowy opis działania programu i eksportu w pliku README.md.
+* Poprawa logiki zaokrąglania i prezentacji różnic wysokości (brak długich ogonków po przecinku).
+
+---
+
+## [1.1.2] - 2025-06-30
+
+### Dodano
+
+* Selektywne debugowanie – możliwość logowania tylko wybranego punktu (np. `tg1`).
+* Ograniczenie liczby logów debugowania w operacjach masowych (np. transformacje, pobieranie z API) do pierwszego punktu lub wybranego punktu.
+* Poprawa formatowania i dopasowania kluczy przy pobieraniu wysokości z Geoportalu (format "Y X", zaokrąglenie do 2 miejsc po przecinku).
+* Możliwość logowania wartości odejmowanych przy obliczaniu różnicy wysokości względem geoportalu.
+
+### Naprawiono
+
+* Błąd precyzji float – wyniki różnic wysokości są zaokrąglane do 2 lub 3 miejsc po przecinku.
+* Poprawa dopasowania odpowiedzi z Geoportalu do punktów wejściowych (lepsze klucze lookup).
+* Poprawa czytelności i selektywności logów debugowania.
+
 ## [1.1.1] - 2025-06-29
 
 ### Zmieniono
