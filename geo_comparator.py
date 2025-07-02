@@ -15,9 +15,10 @@ import traceback
 
 # ==============================================================================
 # === KONFIGURACJA SKRYPTU ===
-DEBUG_MODE = False
+DEBUG_MODE = True
 CONCURRENT_API_REQUESTS = 10
 API_MAX_RETRIES = 5
+ROUND_INPUT_DECIMALS = 1  # domyślna liczba miejsc po przecinku do zaokrąglania
 # ======================================================================
 
 init(autoreset=True)
@@ -101,6 +102,22 @@ def get_geoportal_tolerance() -> float:
             print(f"{Fore.RED}Błąd: Wartość nie może być ujemna.{Style.RESET_ALL}")
         except ValueError:
             print(f"{Fore.RED}Błąd: Wprowadź poprawną liczbę.{Style.RESET_ALL}")
+
+def get_round_decimals() -> int:
+    default_decimals = 1
+    while True:
+        try:
+            prompt = (f"\n{Fore.YELLOW}Podaj liczbę miejsc po przecinku do zaokrąglenia danych wejściowych (domyślnie: {default_decimals}): {Style.RESET_ALL}")
+            val = input(prompt)
+            if not val.strip():
+                print(f"{Fore.CYAN}Przyjęto domyślną wartość: {default_decimals}{Style.RESET_ALL}")
+                return default_decimals
+            val_int = int(val)
+            if 0 <= val_int <= 6:
+                return val_int
+            print(f"{Fore.RED}Błąd: Podaj liczbę z zakresu 0-6.{Style.RESET_ALL}")
+        except ValueError:
+            print(f"{Fore.RED}Błąd: Wprowadź poprawną liczbę całkowitą.{Style.RESET_ALL}")
 
 # === Funkcje wczytywania danych ===
 def load_data(file_path: str, swap_xy: bool = False) -> Optional[pd.DataFrame]:
@@ -352,7 +369,7 @@ def get_geoportal_heights_concurrent(transformed_points: List[Optional[Tuple[flo
     return all_heights
 
 # === Funkcje zapisu i przetwarzania ===
-def export_to_geopackage(results_df: pd.DataFrame, input_df: pd.DataFrame, gpkg_path: str, layer_name: str = "wyniki"):
+def export_to_geopackage(results_df: pd.DataFrame, input_df: pd.DataFrame, gpkg_path: str, layer_name: str = "wyniki", round_decimals: int = 1):
     if results_df.empty:
         print(f"{Fore.YELLOW}Brak danych do zapisu w GeoPackage.")
         return
@@ -366,9 +383,13 @@ def export_to_geopackage(results_df: pd.DataFrame, input_df: pd.DataFrame, gpkg_
     print(f"Wykryto układ współrzędnych dla pliku GeoPackage: EPSG:{source_epsg}")
     try:
         df_geo = results_df.copy()
-        # Zaokrąglenie wysokości do 2 miejsc po przecinku
+        # Zaokrąglenie wysokości do round_decimals miejsc po przecinku
         if 'h_odniesienia' in df_geo.columns:
-            df_geo['h_odniesienia'] = pd.to_numeric(df_geo['h_odniesienia'], errors='coerce').round(2)
+            df_geo['h_odniesienia'] = pd.to_numeric(df_geo['h_odniesienia'], errors='coerce').round(round_decimals)
+        if 'diff_h_geoportal' in df_geo.columns:
+            df_geo['diff_h_geoportal'] = pd.to_numeric(df_geo['diff_h_geoportal'], errors='coerce').round(round_decimals)
+        if 'diff_h' in df_geo.columns:
+            df_geo['diff_h'] = pd.to_numeric(df_geo['diff_h'], errors='coerce').round(round_decimals)
         # Dodaj/aktualizuj kolumnę 'eksport' zgodnie z warunkiem dokładności
         if 'osiaga_dokladnosc' in df_geo.columns:
             df_geo['eksport'] = df_geo['osiaga_dokladnosc'].apply(lambda x: True if str(x).strip().lower() == 'tak' else False)
@@ -400,7 +421,8 @@ def process_data(input_df: pd.DataFrame,
                 comparison_df: Optional[pd.DataFrame], 
                 use_geoportal: bool,
                 max_distance: float,
-                geoportal_tolerance: Optional[float] = None) -> pd.DataFrame:
+                geoportal_tolerance: Optional[float] = None,
+                round_decimals: int = 1) -> pd.DataFrame:
     results = []
     input_df = assign_geodetic_roles(input_df)
     log_file = "przetwarzanie_log.txt"
@@ -424,7 +446,6 @@ def process_data(input_df: pd.DataFrame,
         if tree_comparison is not None and comparison_df is not None:
             distance, nearest_idx = tree_comparison.query([point['x'], point['y']])
             if (max_distance == 0) or (distance <= max_distance):
-                # Teraz Pylance wie, że `comparison_df.iloc` jest bezpieczne
                 nearest_in_comp_point = comparison_df.iloc[nearest_idx]
                 row_data.update({
                     'id_porownania': nearest_in_comp_point['id'],
@@ -435,7 +456,7 @@ def process_data(input_df: pd.DataFrame,
                 })
                 try:
                     diff = float(point['h']) - float(nearest_in_comp_point['h'])
-                    diff_rounded = round(diff, 2)
+                    diff_rounded = round(diff, round_decimals)
                     if diff_rounded == -0.0:
                         diff_rounded = 0.0
                     row_data['diff_h'] = diff_rounded
@@ -454,7 +475,7 @@ def process_data(input_df: pd.DataFrame,
                     log_to_file(log_file, f"Brak wysokości z Geoportalu dla punktu {i+1} ({lookup_key})")
                 if height != 'brak_danych' and pd.notnull(point['h']):
                     try:
-                        diff_h_geoportal = round(float(point['h']) - float(height), 2)
+                        diff_h_geoportal = round(float(point['h']) - float(height), round_decimals)
                         if diff_h_geoportal == -0.0:
                             diff_h_geoportal = 0.0
                         row_data['diff_h_geoportal'] = diff_h_geoportal
@@ -487,34 +508,35 @@ def main():
     display_welcome_screen()
     choice = get_user_choice()
     max_distance = get_max_distance() if choice in [1, 3] else 0.0
+    round_decimals = get_round_decimals()
     input_file = get_file_path("\nPodaj ścieżkę do pliku wejściowego: ")
     swap_input = ask_swap_xy("wejściowego")
-    
     comparison_file = None
     swap_comparison = False  # Inicjalizacja zmiennej
     if choice in [1, 3]:
         comparison_file = get_file_path("Podaj ścieżkę do pliku porównawczego: ")
         swap_comparison = ask_swap_xy("porównawczego")
-        
     geoportal_tolerance = get_geoportal_tolerance() if choice in [2, 3] else None
-        
     print(f"\n{Fore.CYAN}--- Wczytywanie danych ---{Style.RESET_ALL}")
     input_df = load_data(input_file, swap_input)
     if input_df is None or input_df.empty:
         print(f"{Fore.RED}Nie udało się wczytać danych wejściowych. Zamykanie programu.")
         return
-        
+    # Zaokrąglanie danych wejściowych
+    for col in ['x', 'y', 'h']:
+        input_df[col] = input_df[col].round(round_decimals)
     comparison_df = load_data(comparison_file, swap_comparison) if comparison_file else None
-        
-    results_df = process_data(input_df, comparison_df, choice in [2, 3], max_distance, geoportal_tolerance)
-    
+    if comparison_df is not None:
+        if 'h' in comparison_df.columns:
+            comparison_df['h'] = comparison_df['h'].round(round_decimals)
+    results_df = process_data(input_df, comparison_df, choice in [2, 3], max_distance, geoportal_tolerance, round_decimals)
     if not results_df.empty:
         print(f"\n{Fore.CYAN}--- Zapisywanie wyników ---{Style.RESET_ALL}")
         output_csv_file = 'wynik.csv'
-        results_df.to_csv(output_csv_file, sep=';', index=False, float_format='%.2f', na_rep='brak_danych')
+        results_df.to_csv(output_csv_file, sep=';', index=False, float_format=f'%.{round_decimals}f', na_rep='brak_danych')
         print(f"{Fore.GREEN}Wyniki tabelaryczne zapisano w: {os.path.abspath(output_csv_file)}{Style.RESET_ALL}")
         output_gpkg_file = 'wynik.gpkg'
-        export_to_geopackage(results_df, input_df, output_gpkg_file)
+        export_to_geopackage(results_df, input_df, output_gpkg_file, round_decimals=round_decimals)
         print(f"\n{Fore.GREEN}Zakończono przetwarzanie pomyślnie!")
     else:
         print(f"{Fore.YELLOW}Nie wygenerowano żadnych wyników.")
