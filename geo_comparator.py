@@ -2,7 +2,7 @@
 import os
 from typing import Dict, List, Tuple, Optional
 import pandas as pd
-from pyproj import Transformer  # Usunięto nieużywany import CRS
+from pyproj import Transformer
 from pyproj.exceptions import CRSError
 import requests
 from scipy.spatial import KDTree
@@ -15,13 +15,11 @@ import traceback
 
 # ==============================================================================
 # === KONFIGURACJA SKRYPTU ===
-DEBUG_MODE = False
+DEBUG_MODE = True
 CONCURRENT_API_REQUESTS = 10
+API_MAX_RETRIES = 5
+ROUND_INPUT_DECIMALS = 1  # domyślna liczba miejsc po przecinku do zaokrąglania
 # ======================================================================
-
-def debug_log(msg: str):
-    if DEBUG_MODE:
-        print(f"{Fore.MAGENTA}[DEBUG]{Style.RESET_ALL} {msg}")
 
 init(autoreset=True)
 
@@ -59,9 +57,15 @@ def get_file_path(prompt: str) -> str:
         print(f"{Fore.RED}Błąd: Plik nie istnieje. Spróbuj ponownie.")
 
 def get_max_distance() -> float:
+    default_distance = 15.0
     while True:
         try:
-            distance_str = input(f"\n{Fore.YELLOW}Podaj maksymalną odległość wyszukiwania pary w metrach (np. 0.5)\n(Wpisz 0, aby pominąć ten warunek): {Style.RESET_ALL}")
+            prompt = (f"\n{Fore.YELLOW}Podaj maksymalną odległość wyszukiwania pary w metrach (np. 0.5)\n"
+                f"(Wpisz 0, aby pominąć ten warunek, domyślnie {default_distance} m): {Style.RESET_ALL}")
+            distance_str = input(prompt)
+            if not distance_str.strip():
+                print(f"{Fore.CYAN}Przyjęto domyślną wartość: {default_distance} m{Style.RESET_ALL}")
+                return default_distance
             distance = float(distance_str.replace(',', '.'))
             if distance >= 0:
                 return distance
@@ -70,8 +74,12 @@ def get_max_distance() -> float:
             print(f"{Fore.RED}Błąd: Wprowadź poprawną liczbę.{Style.RESET_ALL}")
 
 def ask_swap_xy(file_label: str) -> bool:
+    default = 'n'
     while True:
-        resp = input(f"Czy plik {file_label} ma zamienioną kolejność kolumn (Y,X zamiast X,Y)? [t/n]: ").strip().lower()
+        resp = input(f"Czy plik {file_label} ma zamienioną kolejność kolumn (Y,X zamiast X,Y)? [t/n] (domyślnie: n): ").strip().lower()
+        if not resp:
+            print(f"{Fore.CYAN}Przyjęto domyślną odpowiedź: {default}{Style.RESET_ALL}")
+            return False
         if resp in ['t', 'tak', 'y', 'yes']:
             return True
         if resp in ['n', 'nie', 'no']:
@@ -79,9 +87,15 @@ def ask_swap_xy(file_label: str) -> bool:
         print("Wpisz 't' (tak) lub 'n' (nie).")
 
 def get_geoportal_tolerance() -> float:
+    default_tolerance = 0.2
     while True:
         try:
-            val = input(f"\n{Fore.YELLOW}Podaj dopuszczalną różnicę wysokości względem Geoportalu (w metrach, np. 0.2): {Style.RESET_ALL}")
+            prompt = (f"\n{Fore.YELLOW}Podaj dopuszczalną różnicę wysokości względem Geoportalu (w metrach, np. 0.2) "
+                f"(domyślnie: {default_tolerance}): {Style.RESET_ALL}")
+            val = input(prompt)
+            if not val.strip():
+                print(f"{Fore.CYAN}Przyjęto domyślną wartość: {default_tolerance}{Style.RESET_ALL}")
+                return default_tolerance
             val = float(val.replace(',', '.'))
             if val >= 0:
                 return val
@@ -89,13 +103,40 @@ def get_geoportal_tolerance() -> float:
         except ValueError:
             print(f"{Fore.RED}Błąd: Wprowadź poprawną liczbę.{Style.RESET_ALL}")
 
+def get_round_decimals() -> int:
+    default_decimals = 1
+    while True:
+        try:
+            prompt = (f"\n{Fore.YELLOW}Podaj liczbę miejsc po przecinku do zaokrąglenia danych wejściowych (domyślnie: {default_decimals}): {Style.RESET_ALL}")
+            val = input(prompt)
+            if not val.strip():
+                print(f"{Fore.CYAN}Przyjęto domyślną wartość: {default_decimals}{Style.RESET_ALL}")
+                return default_decimals
+            val_int = int(val)
+            if 0 <= val_int <= 6:
+                return val_int
+            print(f"{Fore.RED}Błąd: Podaj liczbę z zakresu 0-6.{Style.RESET_ALL}")
+        except ValueError:
+            print(f"{Fore.RED}Błąd: Wprowadź poprawną liczbę całkowitą.{Style.RESET_ALL}")
+
 # === Funkcje wczytywania danych ===
 def load_data(file_path: str, swap_xy: bool = False) -> Optional[pd.DataFrame]:
     print(f"Wczytuję plik: {file_path}")
     try:
         file_ext = os.path.splitext(file_path)[1].lower()
         def handle_columns(df):
-            if len(df.columns) == 4:
+            # --- WALIDACJA NAGŁÓWKA ---
+            if len(df) > 0:
+                val = str(df.iloc[0, 1]).replace(',', '.').strip()
+                try:
+                    float(val)
+                except ValueError:
+                    print(f"{Fore.YELLOW}Wykryto nagłówek w pliku. Pierwszy wiersz zostanie pominięty.{Style.RESET_ALL}")
+                    df = df.iloc[1:].reset_index(drop=True)
+            if len(df.columns) >= 4:
+                if len(df.columns) > 4:
+                    print(f"{Fore.YELLOW}Wykryto więcej niż 4 kolumny. Importowane będą tylko pierwsze 4 kolumny.")
+                    df = df.iloc[:, :4]
                 df.columns = ['id', 'x', 'y', 'h']
                 return df
             elif len(df.columns) == 3:
@@ -106,7 +147,7 @@ def load_data(file_path: str, swap_xy: bool = False) -> Optional[pd.DataFrame]:
                 print(f"{Fore.GREEN}Dodano automatyczną numerację punktów z prefiksem '{prefix}'.")
                 return df
             else:
-                print(f"{Fore.RED}Błąd: Plik musi mieć dokładnie 3 lub 4 kolumny (wykryto: {len(df.columns)}). Import przerwany.")
+                print(f"{Fore.RED}Błąd: Plik musi mieć dokładnie 3, 4 lub więcej kolumn (wykryto: {len(df.columns)}). Import przerwany.")
                 return None
         if file_ext in ['.xls', '.xlsx']:
             try:
@@ -176,95 +217,167 @@ def get_source_epsg(easting_coordinate: float) -> Optional[int]:
     return None
 
 # === NOWE FUNKCJE ROBOCZE DLA RÓWNOLEGŁOŚCI ===
-def worker_transform(point_data: Tuple[float, float]) -> Optional[Tuple[float, float]]:
-    northing, easting = point_data
+def worker_transform(point_data_with_index: Tuple[int, float, float]) -> Optional[Tuple[float, float]]:
+    """
+    Worker function for parallel coordinate transformation.
+    Logs detailed information in DEBUG_MODE.
+    """
+    log_file = "transform_log.txt"
+    index, northing, easting = point_data_with_index
+    
     source_epsg = get_source_epsg(easting)
     if source_epsg is None:
+        if DEBUG_MODE:
+            message = f"Punkt {index+1}: BŁĄD - Nie można określić strefy EPSG dla easting={easting}. Współrzędne (N, E): ({northing}, {easting})"
+            log_to_file(log_file, message)
         return None
     try:
         transformer = Transformer.from_crs(f"EPSG:{source_epsg}", "EPSG:2180", always_xy=True)
         x_out, y_out = transformer.transform(easting, northing)
+        if DEBUG_MODE:
+            message = f"Punkt {index+1}: OK. Oryginalne (N, E)=({northing}, {easting}) -> Transformowane (X, Y)=({x_out:.2f}, {y_out:.2f})"
+            log_to_file(log_file, message)
         return x_out, y_out
-    except CRSError:
+    except CRSError as e:
+        if DEBUG_MODE:
+            message = f"Punkt {index+1}: BŁĄD transformacji (CRSError) dla (N, E)=({northing}, {easting}). Błąd: {e}"
+            log_to_file(log_file, message)
         return None
+
+# === LOGOWANIE DO PLIKÓW ===
+def log_to_file(filename: str, message: str):
+    with open(filename, 'a', encoding='utf-8') as f:
+        f.write(message + '\n')
 
 # Flagi do jednorazowego logowania adresu URL i odpowiedzi Geoportalu
 _geoportal_url_logged = False
 _geoportal_response_logged = False
 
 def fetch_height_batch(batch: List[Tuple[float, float]]) -> Dict[str, float]:
-    global _geoportal_url_logged, _geoportal_response_logged
     if not batch:
-        debug_log("Pusta partia punktów do pobrania wysokości z Geoportalu.")
         return {}
-    # Loguj tylko pierwszy wpis z partii
-    if batch:
-        easting, northing = batch[0]
-        debug_log(f"[1/len={len(batch)}] Współrzędne wysyłane do Geoportalu: ({easting:.2f},{northing:.2f}) ... (reszta pominięta)")
-    # Zamiana X z Y i konstruowanie listy zgodnie z dokumentacją (spacja, dwie cyfry po przecinku)
-    point_strings = [f"{northing:.2f} {easting:.2f}" for easting, northing in batch]
+    log_file = "geoportal_log.txt"
+    # Usuwanie duplikatów z paczki (API zwraca wysokość dla każdej współrzędnej, ale klucz w słowniku bywa nadpisany)
+    unique_batch = list(dict.fromkeys(batch))
+    point_strings = [f"{northing:.2f} {easting:.2f}" for easting, northing in unique_batch]
     list_parameter = ",".join(point_strings)
     url = f"https://services.gugik.gov.pl/nmt/?request=GetHByPointList&list={list_parameter}"
-    # Loguj tylko pierwszy wysłany adres URL
-    if not _geoportal_url_logged:
-        debug_log(f"Wysyłam zapytanie do Geoportalu: {url}")
-        _geoportal_url_logged = True
-    try:
-        response = requests.get(url, timeout=30)
-        # Loguj tylko pierwszą odpowiedź
-        if not _geoportal_response_logged:
-            debug_log(f"Odpowiedź status: {response.status_code}, tekst: {response.text[:200]}")
-            _geoportal_response_logged = True
-        response.raise_for_status()
-        batch_heights = {}
-        if response.text.strip():
-            results = response.text.strip().split(',')
-            for line in results:
-                parts = line.strip().split()
-                if len(parts) == 3:
-                    northing_api, easting_api, h_api = parts
-                    key = f"{northing_api} {easting_api}"
-                    batch_heights[key] = float(h_api)
-        debug_log(f"Pobrano {len(batch_heights)} wysokości z Geoportalu dla partii {len(batch)} punktów.")
-        return batch_heights
-    except requests.exceptions.RequestException as e:
-        debug_log(f"Błąd komunikacji z API: {e}")
-        print(f"{Fore.RED}Błąd komunikacji z API: {e}")
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
+    }
+    for attempt in range(1, API_MAX_RETRIES + 1):
+        if DEBUG_MODE:
+            log_to_file(log_file, f"Wysyłka do Geoportalu (próba {attempt}): URL={url}")
+        try:
+            response = requests.get(url, timeout=30, headers=headers)
+            if DEBUG_MODE:
+                log_to_file(log_file, f"Odpowiedź: status={response.status_code}, body={response.text}")
+            response.raise_for_status()
+            batch_heights = {}
+            if response.text.strip():
+                results = response.text.strip().split(',')
+                all_zero = True
+                for line in results:
+                    parts = line.strip().split()
+                    if len(parts) == 3:
+                        northing_api, easting_api, h_api = parts
+                        key = f"{northing_api} {easting_api}"
+                        try:
+                            h_val = float(h_api)
+                            batch_heights[key] = h_val
+                            if h_val != 0.0:
+                                all_zero = False
+                        except ValueError:
+                            batch_heights[key] = 0.0
+                # Jeśli wszystkie wysokości to 0.0, powtórz zapytanie (chyba że to ostatnia próba)
+                if all_zero and attempt < API_MAX_RETRIES:
+                    if DEBUG_MODE:
+                        log_to_file(log_file, "Ostrzeżenie: Wszystkie wysokości 0.0, ponawiam próbę...")
+                    continue
+                return batch_heights
+            else:
+                if DEBUG_MODE:
+                    log_to_file(log_file, "Pusta odpowiedź, ponawiam próbę...")
+                continue
+        except requests.exceptions.RequestException as e:
+            if DEBUG_MODE:
+                log_to_file(log_file, f"Błąd komunikacji z API (próba {attempt}): {e}")
+            if attempt == API_MAX_RETRIES:
+                print(f"{Fore.RED}Błąd komunikacji z API: {e}")
+    # Jeśli po wszystkich próbach nie udało się uzyskać poprawnych danych
+    if DEBUG_MODE:
+        log_to_file(log_file, f"Nie udało się uzyskać poprawnych danych z Geoportalu po {API_MAX_RETRIES} próbach.")
+    return {}
+
+# --- Dodatkowa funkcja do ponownego pobierania brakujących wysokości ---
+def fetch_missing_heights(missing_points: List[Tuple[float, float]]) -> Dict[str, float]:
+    log_file = "geoportal_log.txt"
+    if not missing_points:
         return {}
+    if DEBUG_MODE:
+        log_to_file(log_file, f"Ponowna próba pobrania wysokości dla {len(missing_points)} punktów z 'brak_danych'.")
+    return fetch_height_batch(missing_points)
 
 # === ZAKTUALIZOWANE FUNKCJE GEOPRZETWARZANIA ===
 def transform_coordinates_parallel(df: pd.DataFrame) -> List[Optional[Tuple[float, float]]]:
-    print(f"\n{Fore.CYAN}Transformuję współrzędne (równolegle)...{Style.RESET_ALL}")
-    points_to_transform = list(zip(df['geodetic_northing'], df['geodetic_easting']))
-    if points_to_transform:
-        debug_log(f"[1/len={len(points_to_transform)}] Transformuję punkt: ({points_to_transform[0][0]:.2f}, {points_to_transform[0][1]:.2f}) ... (reszta pominięta)")
+    """
+    Prepares data and runs parallel coordinate transformation, now with index passing for logging.
+    """
+    print(f"\n{Fore.CYAN}Transformuję współrzędne ...{Style.RESET_ALL}")
+    
+    # Przygotowanie do logowania - czyszczenie starego pliku logu przy każdym uruchomieniu
+    log_file = "transform_log.txt"
+    if DEBUG_MODE and os.path.exists(log_file):
+        os.remove(log_file)
+
+    # Przygotowujemy dane wejściowe jako (indeks, northing, easting)
+    points_to_transform = list(zip(
+        range(len(df)), 
+        df['geodetic_northing'], 
+        df['geodetic_easting']
+    ))
+    
+    results = []
+    # Używamy puli procesów do równoległego przetwarzania
+    # Nie ma potrzeby sprawdzania DEBUG_MODE tutaj, worker sam zdecyduje czy logować
     with multiprocessing.Pool() as pool:
+        # Używamy imap dla efektywnego przetwarzania z paskiem postępu
         results = list(tqdm(pool.imap(worker_transform, points_to_transform, chunksize=100), 
                             total=len(points_to_transform), desc="Transformacja współrzędnych"))
-    debug_log(f"Zakończono transformację współrzędnych. Wyników: {len(results)}")
     return results
 
 def get_geoportal_heights_concurrent(transformed_points: List[Optional[Tuple[float, float]]]) -> Dict[str, float]:
-    print(f"\n{Fore.CYAN}Pobieranie danych z Geoportalu (równolegle)...{Style.RESET_ALL}")
+    print(f"\n{Fore.CYAN}Pobieranie danych z Geoportalu ...{Style.RESET_ALL}")
     valid_points = [p for p in transformed_points if p is not None]
-    debug_log(f"Liczba poprawnych punktów do pobrania wysokości: {len(valid_points)}")
+    log_to_file("log.txt", f"Liczba poprawnych punktów do pobrania wysokości: {len(valid_points)}")
     if not valid_points:
         print(f"{Fore.YELLOW}Brak poprawnych punktów do wysłania do API Geoportalu.")
         return {}
     batch_size = 300
     batches = [valid_points[i:i + batch_size] for i in range(0, len(valid_points), batch_size)]
-    debug_log(f"Liczba partii do pobrania: {len(batches)} (po {batch_size} punktów)")
+    log_to_file("log.txt", f"Liczba partii do pobrania: {len(batches)} (po {batch_size} punktów)")
     all_heights = {}
     with ThreadPoolExecutor(max_workers=CONCURRENT_API_REQUESTS) as executor:
         results = list(tqdm(executor.map(fetch_height_batch, batches), 
                             total=len(batches), desc="Pobieranie z Geoportalu"))
     for batch_result in results:
         all_heights.update(batch_result)
-    debug_log(f"Łącznie pobrano wysokości dla {len(all_heights)} punktów z Geoportalu.")
+    # --- Ponowna próba dla punktów, które nie mają wysokości ---
+    missing_points = []
+    for p in valid_points:
+        lookup_key = f"{p[1]:.2f} {p[0]:.2f}"
+        if lookup_key not in all_heights:
+            missing_points.append(p)
+    if missing_points:
+        retry_heights = fetch_missing_heights(missing_points)
+        all_heights.update(retry_heights)
+        if DEBUG_MODE:
+            log_to_file("geoportal_log.txt", f"Po ponownej próbie uzyskano wysokości dla {len(retry_heights)} z {len(missing_points)} brakujących punktów.")
+    log_to_file("log.txt", f"Łącznie pobrano wysokości dla {len(all_heights)} punktów z Geoportalu.")
     return all_heights
 
 # === Funkcje zapisu i przetwarzania ===
-def export_to_geopackage(results_df: pd.DataFrame, input_df: pd.DataFrame, gpkg_path: str, layer_name: str = "wyniki"):
+def export_to_geopackage(results_df: pd.DataFrame, input_df: pd.DataFrame, gpkg_path: str, layer_name: str = "wyniki", round_decimals: int = 1):
     if results_df.empty:
         print(f"{Fore.YELLOW}Brak danych do zapisu w GeoPackage.")
         return
@@ -278,6 +391,13 @@ def export_to_geopackage(results_df: pd.DataFrame, input_df: pd.DataFrame, gpkg_
     print(f"Wykryto układ współrzędnych dla pliku GeoPackage: EPSG:{source_epsg}")
     try:
         df_geo = results_df.copy()
+        # Zaokrąglenie wysokości do round_decimals miejsc po przecinku
+        if 'h_odniesienia' in df_geo.columns:
+            df_geo['h_odniesienia'] = pd.to_numeric(df_geo['h_odniesienia'], errors='coerce').round(round_decimals)
+        if 'diff_h_geoportal' in df_geo.columns:
+            df_geo['diff_h_geoportal'] = pd.to_numeric(df_geo['diff_h_geoportal'], errors='coerce').round(round_decimals)
+        if 'diff_h' in df_geo.columns:
+            df_geo['diff_h'] = pd.to_numeric(df_geo['diff_h'], errors='coerce').round(round_decimals)
         # Dodaj/aktualizuj kolumnę 'eksport' zgodnie z warunkiem dokładności
         if 'osiaga_dokladnosc' in df_geo.columns:
             df_geo['eksport'] = df_geo['osiaga_dokladnosc'].apply(lambda x: True if str(x).strip().lower() == 'tak' else False)
@@ -309,43 +429,31 @@ def process_data(input_df: pd.DataFrame,
                 comparison_df: Optional[pd.DataFrame], 
                 use_geoportal: bool,
                 max_distance: float,
-                geoportal_tolerance: Optional[float] = None) -> pd.DataFrame:
-    debug_log(f"Rozpoczynam przetwarzanie danych. use_geoportal={use_geoportal}, max_distance={max_distance}, geoportal_tolerance={geoportal_tolerance}")
+                geoportal_tolerance: Optional[float] = None,
+                round_decimals: int = 1) -> pd.DataFrame:
     results = []
     input_df = assign_geodetic_roles(input_df)
-    
+    log_file = "przetwarzanie_log.txt"
+    if DEBUG_MODE and os.path.exists(log_file):
+        os.remove(log_file)
     geoportal_heights, transformed_points = {}, []
     if use_geoportal:
-        debug_log("Transformuję współrzędne wejściowe do układu 2180 na potrzeby Geoportalu...")
         transformed_points = transform_coordinates_parallel(input_df)
         if transformed_points:
-            debug_log("Pobieram wysokości z Geoportalu...")
             geoportal_heights = get_geoportal_heights_concurrent(transformed_points)
-        else:
-            debug_log("Brak przetransformowanych punktów do pobrania wysokości z Geoportalu!")
-    
     tree_comparison = None
     if comparison_df is not None and not comparison_df.empty:
-        print(f"\n{Fore.CYAN}Przygotowuję indeks przestrzenny...{Style.RESET_ALL}")
         comparison_points = comparison_df[['x', 'y']].values
         tree_comparison = KDTree(comparison_points)
-        print(f"{Fore.GREEN}Indeks gotowy.{Style.RESET_ALL}")
-        
     paired_count = 0
-    
     for i, (_, point) in enumerate(tqdm(input_df.iterrows(), total=len(input_df), desc="Przetwarzanie punktów")):
         row_data = {
             'id_odniesienia': point['id'], 'x_odniesienia': point['x'],
             'y_odniesienia': point['y'], 'h_odniesienia': point['h'],
         }
-        # Loguj tylko pierwszy punkt
-        if i == 0:
-            debug_log(f"[1/len={len(input_df)}] Przetwarzam punkt: {row_data} ... (reszta pominięta)")
-        # POPRAWKA BŁĘDU 1: Dodano jawne sprawdzenie `comparison_df is not None`
         if tree_comparison is not None and comparison_df is not None:
             distance, nearest_idx = tree_comparison.query([point['x'], point['y']])
             if (max_distance == 0) or (distance <= max_distance):
-                # Teraz Pylance wie, że `comparison_df.iloc` jest bezpieczne
                 nearest_in_comp_point = comparison_df.iloc[nearest_idx]
                 row_data.update({
                     'id_porownania': nearest_in_comp_point['id'],
@@ -355,12 +463,14 @@ def process_data(input_df: pd.DataFrame,
                     'odleglosc_pary': distance
                 })
                 try:
-                    row_data['diff_h'] = float(point['h']) - float(nearest_in_comp_point['h'])
+                    diff = float(point['h']) - float(nearest_in_comp_point['h'])
+                    diff_rounded = round(diff, round_decimals)
+                    if diff_rounded == -0.0:
+                        diff_rounded = 0.0
+                    row_data['diff_h'] = diff_rounded
                 except (ValueError, TypeError):
                     row_data['diff_h'] = 'brak_danych'
                 paired_count += 1
-                
-        # POPRAWKA BŁĘDU 2: Rozbicie warunku na dwa kroki
         if use_geoportal and i < len(transformed_points):
             transformed_point = transformed_points[i]
             if transformed_point is not None:
@@ -368,34 +478,34 @@ def process_data(input_df: pd.DataFrame,
                 # lookup_key w formacie 'Y X' z dwoma miejscami po przecinku
                 lookup_key = f"{northing_2180:.2f} {easting_2180:.2f}"
                 height = geoportal_heights.get(lookup_key, "brak_danych")
-                if i == 0:
-                    debug_log(f"Punkt {i}: lookup_key={lookup_key}, geoportal_h={height} ... (reszta lookup_key pominięta)")
                 row_data['geoportal_h'] = str(height)
-                
+                if height == 'brak_danych' and DEBUG_MODE:
+                    log_to_file(log_file, f"Brak wysokości z Geoportalu dla punktu {i+1} ({lookup_key})")
                 if height != 'brak_danych' and pd.notnull(point['h']):
                     try:
-                        diff_h_geoportal = round(float(point['h']) - float(height), 2)
+                        diff_h_geoportal = round(float(point['h']) - float(height), round_decimals)
+                        if diff_h_geoportal == -0.0:
+                            diff_h_geoportal = 0.0
                         row_data['diff_h_geoportal'] = diff_h_geoportal
-                        if i == 0:
-                            debug_log(f"Obliczam diff_h_geoportal: {point['h']} (punkt) - {height} (geoportal) = {diff_h_geoportal}")
                         if geoportal_tolerance is not None:
                             row_data['osiaga_dokladnosc'] = 'Tak' if abs(diff_h_geoportal) <= geoportal_tolerance else 'Nie'
                     except (ValueError, TypeError):
                         row_data['diff_h_geoportal'] = 'brak_danych'
                 else:
                     row_data['diff_h_geoportal'] = 'brak_danych'
-                
+            else:
+                row_data['geoportal_h'] = 'brak_danych'
+                row_data['diff_h_geoportal'] = 'brak_danych'
+                if DEBUG_MODE:
+                    log_to_file(log_file, f"Punkt {i+1}: Brak przetransformowanych współrzędnych lub brak danych z geoportalu.")
         results.append(row_data)
 
     if comparison_df is not None:
         print(f"{Fore.GREEN}Znaleziono i połączono {paired_count} par punktów.{Style.RESET_ALL}")
-        
     results_df = pd.DataFrame(results)
-    
     if use_geoportal and 'diff_h_geoportal' in results_df.columns:
         results_df['__abs_diff_h_geoportal'] = pd.to_numeric(results_df['diff_h_geoportal'], errors='coerce').abs()
         results_df = results_df.sort_values(by='__abs_diff_h_geoportal', ascending=False).drop(columns=['__abs_diff_h_geoportal'])
-    
     final_cols = ['id_odniesienia', 'x_odniesienia', 'y_odniesienia', 'h_odniesienia', 'diff_h_geoportal', 'geoportal_h', 'osiaga_dokladnosc', 'id_porownania', 'x_porownania', 'y_porownania', 'h_porownania', 'diff_h', 'odleglosc_pary']
     existing_cols = [col for col in final_cols if col in results_df.columns]
     return results_df[existing_cols]
@@ -406,34 +516,35 @@ def main():
     display_welcome_screen()
     choice = get_user_choice()
     max_distance = get_max_distance() if choice in [1, 3] else 0.0
+    round_decimals = get_round_decimals()
     input_file = get_file_path("\nPodaj ścieżkę do pliku wejściowego: ")
     swap_input = ask_swap_xy("wejściowego")
-    
     comparison_file = None
     swap_comparison = False  # Inicjalizacja zmiennej
     if choice in [1, 3]:
         comparison_file = get_file_path("Podaj ścieżkę do pliku porównawczego: ")
         swap_comparison = ask_swap_xy("porównawczego")
-        
     geoportal_tolerance = get_geoportal_tolerance() if choice in [2, 3] else None
-        
     print(f"\n{Fore.CYAN}--- Wczytywanie danych ---{Style.RESET_ALL}")
     input_df = load_data(input_file, swap_input)
     if input_df is None or input_df.empty:
         print(f"{Fore.RED}Nie udało się wczytać danych wejściowych. Zamykanie programu.")
         return
-        
+    # Zaokrąglanie danych wejściowych
+    for col in ['x', 'y', 'h']:
+        input_df[col] = input_df[col].round(round_decimals)
     comparison_df = load_data(comparison_file, swap_comparison) if comparison_file else None
-        
-    results_df = process_data(input_df, comparison_df, choice in [2, 3], max_distance, geoportal_tolerance)
-    
+    if comparison_df is not None:
+        if 'h' in comparison_df.columns:
+            comparison_df['h'] = comparison_df['h'].round(round_decimals)
+    results_df = process_data(input_df, comparison_df, choice in [2, 3], max_distance, geoportal_tolerance, round_decimals)
     if not results_df.empty:
         print(f"\n{Fore.CYAN}--- Zapisywanie wyników ---{Style.RESET_ALL}")
         output_csv_file = 'wynik.csv'
-        results_df.to_csv(output_csv_file, sep=';', index=False, float_format='%.2f', na_rep='brak_danych')
+        results_df.to_csv(output_csv_file, sep=';', index=False, float_format=f'%.{round_decimals}f', na_rep='brak_danych')
         print(f"{Fore.GREEN}Wyniki tabelaryczne zapisano w: {os.path.abspath(output_csv_file)}{Style.RESET_ALL}")
         output_gpkg_file = 'wynik.gpkg'
-        export_to_geopackage(results_df, input_df, output_gpkg_file)
+        export_to_geopackage(results_df, input_df, output_gpkg_file, round_decimals=round_decimals)
         print(f"\n{Fore.GREEN}Zakończono przetwarzanie pomyślnie!")
     else:
         print(f"{Fore.YELLOW}Nie wygenerowano żadnych wyników.")
