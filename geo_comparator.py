@@ -232,14 +232,15 @@ def fetch_height_batch(batch: List[Tuple[float, float]]) -> Dict[str, float]:
     if not batch:
         return {}
     log_file = "geoportal_log.txt"
-    # Zamiana X z Y i konstruowanie listy zgodnie z dokumentacją (spacja, dwie cyfry po przecinku)
-    point_strings = [f"{northing:.2f} {easting:.2f}" for easting, northing in batch]
+    # Usuwanie duplikatów z paczki (API zwraca wysokość dla każdej współrzędnej, ale klucz w słowniku bywa nadpisany)
+    unique_batch = list(dict.fromkeys(batch))
+    point_strings = [f"{northing:.2f} {easting:.2f}" for easting, northing in unique_batch]
     list_parameter = ",".join(point_strings)
     url = f"https://services.gugik.gov.pl/nmt/?request=GetHByPointList&list={list_parameter}"
     headers = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
     }
-    max_retries = 3
+    max_retries = 5
     for attempt in range(1, max_retries + 1):
         if DEBUG_MODE:
             log_to_file(log_file, f"Wysyłka do Geoportalu (próba {attempt}): URL={url}")
@@ -283,6 +284,15 @@ def fetch_height_batch(batch: List[Tuple[float, float]]) -> Dict[str, float]:
     if DEBUG_MODE:
         log_to_file(log_file, f"Nie udało się uzyskać poprawnych danych z Geoportalu po {max_retries} próbach.")
     return {}
+
+# --- Dodatkowa funkcja do ponownego pobierania brakujących wysokości ---
+def fetch_missing_heights(missing_points: List[Tuple[float, float]]) -> Dict[str, float]:
+    log_file = "geoportal_log.txt"
+    if not missing_points:
+        return {}
+    if DEBUG_MODE:
+        log_to_file(log_file, f"Ponowna próba pobrania wysokości dla {len(missing_points)} punktów z 'brak_danych'.")
+    return fetch_height_batch(missing_points)
 
 # === ZAKTUALIZOWANE FUNKCJE GEOPRZETWARZANIA ===
 def transform_coordinates_parallel(df: pd.DataFrame) -> List[Optional[Tuple[float, float]]]:
@@ -328,6 +338,17 @@ def get_geoportal_heights_concurrent(transformed_points: List[Optional[Tuple[flo
                             total=len(batches), desc="Pobieranie z Geoportalu"))
     for batch_result in results:
         all_heights.update(batch_result)
+    # --- Ponowna próba dla punktów, które nie mają wysokości ---
+    missing_points = []
+    for p in valid_points:
+        lookup_key = f"{p[1]:.2f} {p[0]:.2f}"
+        if lookup_key not in all_heights:
+            missing_points.append(p)
+    if missing_points:
+        retry_heights = fetch_missing_heights(missing_points)
+        all_heights.update(retry_heights)
+        if DEBUG_MODE:
+            log_to_file("geoportal_log.txt", f"Po ponownej próbie uzyskano wysokości dla {len(retry_heights)} z {len(missing_points)} brakujących punktów.")
     log_to_file("log.txt", f"Łącznie pobrano wysokości dla {len(all_heights)} punktów z Geoportalu.")
     return all_heights
 
@@ -396,7 +417,6 @@ def process_data(input_df: pd.DataFrame,
         comparison_points = comparison_df[['x', 'y']].values
         tree_comparison = KDTree(comparison_points)
     paired_count = 0
-    
     for i, (_, point) in enumerate(tqdm(input_df.iterrows(), total=len(input_df), desc="Przetwarzanie punktów")):
         row_data = {
             'id_odniesienia': point['id'], 'x_odniesienia': point['x'],
@@ -429,6 +449,8 @@ def process_data(input_df: pd.DataFrame,
                 lookup_key = f"{northing_2180:.2f} {easting_2180:.2f}"
                 height = geoportal_heights.get(lookup_key, "brak_danych")
                 row_data['geoportal_h'] = str(height)
+                if height == 'brak_danych' and DEBUG_MODE:
+                    log_to_file(log_file, f"Brak wysokości z Geoportalu dla punktu {i+1} ({lookup_key})")
                 if height != 'brak_danych' and pd.notnull(point['h']):
                     try:
                         diff_h_geoportal = round(float(point['h']) - float(height), 2)
@@ -448,7 +470,6 @@ def process_data(input_df: pd.DataFrame,
 
     if comparison_df is not None:
         print(f"{Fore.GREEN}Znaleziono i połączono {paired_count} par punktów.{Style.RESET_ALL}")
-        
     results_df = pd.DataFrame(results)
     if use_geoportal and 'diff_h_geoportal' in results_df.columns:
         results_df['__abs_diff_h_geoportal'] = pd.to_numeric(results_df['diff_h_geoportal'], errors='coerce').abs()
