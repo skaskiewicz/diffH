@@ -236,28 +236,53 @@ def fetch_height_batch(batch: List[Tuple[float, float]]) -> Dict[str, float]:
     point_strings = [f"{northing:.2f} {easting:.2f}" for easting, northing in batch]
     list_parameter = ",".join(point_strings)
     url = f"https://services.gugik.gov.pl/nmt/?request=GetHByPointList&list={list_parameter}"
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
+    }
+    max_retries = 3
+    for attempt in range(1, max_retries + 1):
+        if DEBUG_MODE:
+            log_to_file(log_file, f"Wysyłka do Geoportalu (próba {attempt}): URL={url}")
+        try:
+            response = requests.get(url, timeout=30, headers=headers)
+            if DEBUG_MODE:
+                log_to_file(log_file, f"Odpowiedź: status={response.status_code}, body={response.text}")
+            response.raise_for_status()
+            batch_heights = {}
+            if response.text.strip():
+                results = response.text.strip().split(',')
+                all_zero = True
+                for line in results:
+                    parts = line.strip().split()
+                    if len(parts) == 3:
+                        northing_api, easting_api, h_api = parts
+                        key = f"{northing_api} {easting_api}"
+                        try:
+                            h_val = float(h_api)
+                            batch_heights[key] = h_val
+                            if h_val != 0.0:
+                                all_zero = False
+                        except ValueError:
+                            batch_heights[key] = 0.0
+                # Jeśli wszystkie wysokości to 0.0, powtórz zapytanie (chyba że to ostatnia próba)
+                if all_zero and attempt < max_retries:
+                    if DEBUG_MODE:
+                        log_to_file(log_file, "Ostrzeżenie: Wszystkie wysokości 0.0, ponawiam próbę...")
+                    continue
+                return batch_heights
+            else:
+                if DEBUG_MODE:
+                    log_to_file(log_file, "Pusta odpowiedź, ponawiam próbę...")
+                continue
+        except requests.exceptions.RequestException as e:
+            if DEBUG_MODE:
+                log_to_file(log_file, f"Błąd komunikacji z API (próba {attempt}): {e}")
+            if attempt == max_retries:
+                print(f"{Fore.RED}Błąd komunikacji z API: {e}")
+    # Jeśli po wszystkich próbach nie udało się uzyskać poprawnych danych
     if DEBUG_MODE:
-        log_to_file(log_file, f"Wysyłka do Geoportalu: URL={url}")
-    try:
-        response = requests.get(url, timeout=30)
-        if DEBUG_MODE:
-            log_to_file(log_file, f"Odpowiedź: status={response.status_code}, body={response.text}")
-        response.raise_for_status()
-        batch_heights = {}
-        if response.text.strip():
-            results = response.text.strip().split(',')
-            for line in results:
-                parts = line.strip().split()
-                if len(parts) == 3:
-                    northing_api, easting_api, h_api = parts
-                    key = f"{northing_api} {easting_api}"
-                    batch_heights[key] = float(h_api)
-        return batch_heights
-    except requests.exceptions.RequestException as e:
-        if DEBUG_MODE:
-            log_to_file(log_file, f"Błąd komunikacji z API: {e}")
-        print(f"{Fore.RED}Błąd komunikacji z API: {e}")
-        return {}
+        log_to_file(log_file, f"Nie udało się uzyskać poprawnych danych z Geoportalu po {max_retries} próbach.")
+    return {}
 
 # === ZAKTUALIZOWANE FUNKCJE GEOPRZETWARZANIA ===
 def transform_coordinates_parallel(df: pd.DataFrame) -> List[Optional[Tuple[float, float]]]:
