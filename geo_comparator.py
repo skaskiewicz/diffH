@@ -12,12 +12,12 @@ from tqdm import tqdm
 import multiprocessing
 from concurrent.futures import ThreadPoolExecutor
 import traceback
-import math
 
 # ==============================================================================
 # === KONFIGURACJA SKRYPTU ===
-DEBUG_MODE = True
+DEBUG_MODE = False
 CONCURRENT_API_REQUESTS = 10
+API_MAX_RETRIES = 5
 # ======================================================================
 
 init(autoreset=True)
@@ -240,8 +240,7 @@ def fetch_height_batch(batch: List[Tuple[float, float]]) -> Dict[str, float]:
     headers = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
     }
-    max_retries = 5
-    for attempt in range(1, max_retries + 1):
+    for attempt in range(1, API_MAX_RETRIES + 1):
         if DEBUG_MODE:
             log_to_file(log_file, f"Wysyłka do Geoportalu (próba {attempt}): URL={url}")
         try:
@@ -266,7 +265,7 @@ def fetch_height_batch(batch: List[Tuple[float, float]]) -> Dict[str, float]:
                         except ValueError:
                             batch_heights[key] = 0.0
                 # Jeśli wszystkie wysokości to 0.0, powtórz zapytanie (chyba że to ostatnia próba)
-                if all_zero and attempt < max_retries:
+                if all_zero and attempt < API_MAX_RETRIES:
                     if DEBUG_MODE:
                         log_to_file(log_file, "Ostrzeżenie: Wszystkie wysokości 0.0, ponawiam próbę...")
                     continue
@@ -278,11 +277,11 @@ def fetch_height_batch(batch: List[Tuple[float, float]]) -> Dict[str, float]:
         except requests.exceptions.RequestException as e:
             if DEBUG_MODE:
                 log_to_file(log_file, f"Błąd komunikacji z API (próba {attempt}): {e}")
-            if attempt == max_retries:
+            if attempt == API_MAX_RETRIES:
                 print(f"{Fore.RED}Błąd komunikacji z API: {e}")
     # Jeśli po wszystkich próbach nie udało się uzyskać poprawnych danych
     if DEBUG_MODE:
-        log_to_file(log_file, f"Nie udało się uzyskać poprawnych danych z Geoportalu po {max_retries} próbach.")
+        log_to_file(log_file, f"Nie udało się uzyskać poprawnych danych z Geoportalu po {API_MAX_RETRIES} próbach.")
     return {}
 
 # --- Dodatkowa funkcja do ponownego pobierania brakujących wysokości ---
@@ -437,7 +436,9 @@ def process_data(input_df: pd.DataFrame,
                 try:
                     diff = float(point['h']) - float(nearest_in_comp_point['h'])
                     diff_rounded = round(diff, 2)
-                    row_data['diff_h'] = math.copysign(diff_rounded, 1.0)
+                    if diff_rounded == -0.0:
+                        diff_rounded = 0.0
+                    row_data['diff_h'] = diff_rounded
                 except (ValueError, TypeError):
                     row_data['diff_h'] = 'brak_danych'
                 paired_count += 1
@@ -454,7 +455,9 @@ def process_data(input_df: pd.DataFrame,
                 if height != 'brak_danych' and pd.notnull(point['h']):
                     try:
                         diff_h_geoportal = round(float(point['h']) - float(height), 2)
-                        row_data['diff_h_geoportal'] = math.copysign(diff_h_geoportal, 1.0)
+                        if diff_h_geoportal == -0.0:
+                            diff_h_geoportal = 0.0
+                        row_data['diff_h_geoportal'] = diff_h_geoportal
                         if geoportal_tolerance is not None:
                             row_data['osiaga_dokladnosc'] = 'Tak' if abs(diff_h_geoportal) <= geoportal_tolerance else 'Nie'
                     except (ValueError, TypeError):
