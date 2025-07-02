@@ -125,6 +125,14 @@ def load_data(file_path: str, swap_xy: bool = False) -> Optional[pd.DataFrame]:
     try:
         file_ext = os.path.splitext(file_path)[1].lower()
         def handle_columns(df):
+            # --- WALIDACJA NAGŁÓWKA ---
+            if len(df) > 0:
+                val = str(df.iloc[0, 1]).replace(',', '.').strip()
+                try:
+                    float(val)
+                except ValueError:
+                    print(f"{Fore.YELLOW}Wykryto nagłówek w pliku. Pierwszy wiersz zostanie pominięty.{Style.RESET_ALL}")
+                    df = df.iloc[1:].reset_index(drop=True)
             if len(df.columns) >= 4:
                 if len(df.columns) > 4:
                     print(f"{Fore.YELLOW}Wykryto więcej niż 4 kolumny. Importowane będą tylko pierwsze 4 kolumny.")
