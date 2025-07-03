@@ -6,6 +6,23 @@ Format bazuje na [Keep a Changelog](https://keepachangelog.com/en/1.0.0/), a pro
 
 ---
 
+## [1.2.1] - 2025-07-02
+
+### Dodano
+
+* Parametryzacja zaokrąglenia danych wejściowych – możliwość ustawienia liczby miejsc po przecinku dla współrzędnych i wysokości.
+* Logowanie do plików – zapisywanie logów z działania programu do osobnych plików.
+* Domyślne wartości dla komunikatów użytkownika w funkcjach wejściowych (odległość, tolerancja) oraz informowanie o ich użyciu.
+
+### Zmieniono
+
+* Poprawa logowania: lepsza czytelność, dodanie ponawiania wysyłki punktów w przypadku braku danych.
+* Pomijanie pierwszego wiersza, gdy druga kolumna nie jest liczbą.
+
+### Naprawiono
+
+* Ponawianie pobierania punktów, gdy występuje brak danych z geoportalu.
+
 ## [1.2.0] - 2025-07-01
 
 ### Dodano

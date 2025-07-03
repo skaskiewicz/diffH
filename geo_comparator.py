@@ -15,10 +15,11 @@ import traceback
 
 # ==============================================================================
 # === KONFIGURACJA SKRYPTU ===
-DEBUG_MODE = True
+DEBUG_MODE = False
 CONCURRENT_API_REQUESTS = 10
 API_MAX_RETRIES = 5
 ROUND_INPUT_DECIMALS = 1  # domyślna liczba miejsc po przecinku do zaokrąglania
+DEFAULT_SPARSE_GRID_DISTANCE = 25.0  # domyślna odległość siatki rozrzedzonej (m)
 # ======================================================================
 
 init(autoreset=True)
@@ -525,6 +526,31 @@ def main():
         comparison_file = get_file_path("Podaj ścieżkę do pliku porównawczego: ")
         swap_comparison = ask_swap_xy("porównawczego")
     geoportal_tolerance = get_geoportal_tolerance() if choice in [2, 3] else None
+
+    # --- Nowy fragment: pytanie o eksport rozrzedzonej siatki ---
+    export_sparse_grid = False
+    sparse_grid_distance = DEFAULT_SPARSE_GRID_DISTANCE
+    if choice in [2, 3]:
+        resp = input(f"\n{Fore.YELLOW}Czy wykonać eksport rozrzedzonej siatki dla punktów spełniających dokładność? [t/n] (domyślnie: n): ").strip().lower()
+        if resp in ['t', 'tak', 'y', 'yes']:
+            dist_prompt = f"Podaj oczekiwaną odległość pomiędzy punktami siatki (w metrach, domyślnie: {DEFAULT_SPARSE_GRID_DISTANCE}): "
+            dist_val = input(dist_prompt).strip()
+            if dist_val:
+                try:
+                    sparse_grid_distance = float(dist_val.replace(',', '.'))
+                except ValueError:
+                    print(f"{Fore.RED}Błąd: Wprowadzono niepoprawną liczbę. Przyjęto domyślną wartość {DEFAULT_SPARSE_GRID_DISTANCE} m.")
+                    sparse_grid_distance = DEFAULT_SPARSE_GRID_DISTANCE
+            print(f"{Fore.CYAN}Wybrano eksport rozrzedzonej siatki z parametrem odległości: {sparse_grid_distance} m{Style.RESET_ALL}")
+            # --- Nowy fragment: pytanie o zakres opracowania ---
+            zakres_resp = input(f"\n{Fore.YELLOW}Czy porównanie i eksport rozrzedzonej siatki wykonać tylko w zakresie opracowania? [t/n] (domyślnie: t): ").strip().lower()
+            if not zakres_resp or zakres_resp in ['t', 'tak', 'y', 'yes']:
+                zakres_file = get_file_path("Podaj ścieżkę do pliku z zakresem opracowania (TXT, CSV, XLS, XLSX, 2 lub 3 kolumny XY/nrXY): ")
+                print(f"{Fore.CYAN}Wybrano zakres opracowania na podstawie pliku: {zakres_file}{Style.RESET_ALL}")
+            else:
+                print(f"{Fore.CYAN}Eksport rozrzedzonej siatki zostanie wykonany dla całego obszaru danych wejściowych.{Style.RESET_ALL}")
+        else:
+            print(f"{Fore.CYAN}Eksport rozrzedzonej siatki nie zostanie wykonany.{Style.RESET_ALL}")
     print(f"\n{Fore.CYAN}--- Wczytywanie danych ---{Style.RESET_ALL}")
     input_df = load_data(input_file, swap_input)
     if input_df is None or input_df.empty:
