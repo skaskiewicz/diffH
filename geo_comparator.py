@@ -12,6 +12,8 @@ from tqdm import tqdm
 import multiprocessing
 from concurrent.futures import ThreadPoolExecutor
 import traceback
+import numpy as np
+from matplotlib.path import Path
 
 # ==============================================================================
 # === KONFIGURACJA SKRYPTU ===
@@ -377,6 +379,79 @@ def get_geoportal_heights_concurrent(transformed_points: List[Optional[Tuple[flo
     log_to_file("log.txt", f"Łącznie pobrano wysokości dla {len(all_heights)} punktów z Geoportalu.")
     return all_heights
 
+# === Nowe funkcje do generowania rozrzedzonej siatki ===
+def generuj_srodki_heksagonalne(obszar_wielokat: np.ndarray, odleglosc_miedzy_punktami: float) -> np.ndarray:
+    """
+    Generuje i filtruje środki okręgów w siatce heksagonalnej wewnątrz zadanego wieloboku.
+
+    :param obszar_wielokat: Tablica NumPy z wierzchołkami wieloboku [[x1, y1], ...].
+    :param odleglosc_miedzy_punktami: Oczekiwana odległość między środkami okręgów.
+    :return: Posortowana tablica NumPy ze środkami [(x, y), ...].
+    """
+    d = odleglosc_miedzy_punktami
+    dx, dy = d, d * np.sqrt(3) / 2
+    sciezka_obszaru = Path(obszar_wielokat)
+    min_x, min_y = np.min(obszar_wielokat, axis=0)
+    max_x, max_y = np.max(obszar_wielokat, axis=0)
+    lista_srodkow = []
+    y_coord, wiersz = min_y, 0
+    while y_coord < max_y + dy:
+        x_coord = min_x
+        if wiersz % 2 != 0:
+            x_coord -= dx / 2
+        while x_coord < max_x + dx:
+            if sciezka_obszaru.contains_point((x_coord, y_coord)):
+                lista_srodkow.append((x_coord, y_coord))
+            x_coord += dx
+        y_coord += dy
+        wiersz += 1
+    if not lista_srodkow:
+        return np.array([])
+    lista_srodkow.sort(key=lambda p: (p[1], p[0]))
+    return np.array(lista_srodkow)
+
+def znajdz_punkty_dla_siatki(punkty_kandydaci: pd.DataFrame, obszar_wielokat: np.ndarray, odleglosc_siatki: float) -> pd.DataFrame:
+    """
+    Główna funkcja implementująca algorytm pokrycia siatką heksagonalną.
+
+    :param punkty_kandydaci: DataFrame z punktami, które spełniły warunek dokładności.
+                            Musi zawierać kolumny ['x_odniesienia', 'y_odniesienia', 'h_odniesienia', 'geoportal_h'].
+    :param obszar_wielokat: Tablica NumPy z wierzchołkami wieloboku.
+    :param odleglosc_siatki: Oczekiwana odległość między punktami siatki (promień okręgu to połowa tej wartości).
+    :return: DataFrame z wynikami dla siatki.
+    """
+    promien_szukania = odleglosc_siatki / 2.0
+    dane_punktow = punkty_kandydaci[['x_odniesienia', 'y_odniesienia', 'h_odniesienia', 'geoportal_h']].apply(pd.to_numeric, errors='coerce').dropna()
+    punkty_np = dane_punktow.values
+    drzewo_kd = KDTree(punkty_np[:, :2])
+    print("\nGenerowanie siatki pokrycia heksagonalnego...")
+    lista_srodkow = generuj_srodki_heksagonalne(obszar_wielokat, odleglosc_siatki)
+    if lista_srodkow.shape[0] == 0:
+        print(f"{Fore.YELLOW}Nie wygenerowano żadnych punktów siatki wewnątrz zadanego obszaru.")
+        return pd.DataFrame()
+    print(f"Wygenerowano {len(lista_srodkow)} środków okręgów w zadanym obszarze.")
+    odwiedzone_indeksy_w_np = set()
+    wyniki_siatki = []
+    for srodek in tqdm(lista_srodkow, desc="Przetwarzanie siatki heksagonalnej"):
+        kandydaci_idx_w_np = drzewo_kd.query_ball_point(srodek, r=promien_szukania)
+        aktualni_kandydaci_idx = [idx for idx in kandydaci_idx_w_np if idx not in odwiedzone_indeksy_w_np]
+        if not aktualni_kandydaci_idx:
+            continue
+        najlepszy_idx_w_np = min(
+            aktualni_kandydaci_idx,
+            key=lambda idx: (
+                abs(punkty_np[idx, 2] - punkty_np[idx, 3]),
+                np.linalg.norm(punkty_np[idx, :2] - srodek)
+            )
+        )
+        odwiedzone_indeksy_w_np.add(najlepszy_idx_w_np)
+        oryginalny_indeks_df = dane_punktow.index[najlepszy_idx_w_np]
+        znaleziony_punkt_dane = punkty_kandydaci.loc[oryginalny_indeks_df]
+        wyniki_siatki.append(znaleziony_punkt_dane)
+    if not wyniki_siatki:
+        return pd.DataFrame()
+    return pd.DataFrame(wyniki_siatki).reset_index(drop=True)
+
 # === Funkcje zapisu i przetwarzania ===
 def export_to_geopackage(results_df: pd.DataFrame, input_df: pd.DataFrame, gpkg_path: str, layer_name: str = "wyniki", round_decimals: int = 1):
     if results_df.empty:
@@ -527,30 +602,29 @@ def main():
         swap_comparison = ask_swap_xy("porównawczego")
     geoportal_tolerance = get_geoportal_tolerance() if choice in [2, 3] else None
 
-    # --- Nowy fragment: pytanie o eksport rozrzedzonej siatki ---
-    export_sparse_grid = False
+    # --- Parametry eksportu rozrzedzonej siatki ---
+    sparse_grid_requested = False
     sparse_grid_distance = DEFAULT_SPARSE_GRID_DISTANCE
+    zakres_df = None
     if choice in [2, 3]:
         resp = input(f"\n{Fore.YELLOW}Czy wykonać eksport rozrzedzonej siatki dla punktów spełniających dokładność? [t/n] (domyślnie: n): ").strip().lower()
         if resp in ['t', 'tak', 'y', 'yes']:
+            sparse_grid_requested = True
             dist_prompt = f"Podaj oczekiwaną odległość pomiędzy punktami siatki (w metrach, domyślnie: {DEFAULT_SPARSE_GRID_DISTANCE}): "
             dist_val = input(dist_prompt).strip()
             if dist_val:
                 try:
-                    sparse_grid_distance = float(dist_val.replace(',', '.'))
+                    parsed_dist = float(dist_val.replace(',', '.'))
+                    if parsed_dist > 0:
+                        sparse_grid_distance = parsed_dist
+                    else:
+                        print(f"{Fore.RED}Błąd: Odległość musi być większa od zera. Przyjęto domyślną wartość {DEFAULT_SPARSE_GRID_DISTANCE} m.")
                 except ValueError:
                     print(f"{Fore.RED}Błąd: Wprowadzono niepoprawną liczbę. Przyjęto domyślną wartość {DEFAULT_SPARSE_GRID_DISTANCE} m.")
-                    sparse_grid_distance = DEFAULT_SPARSE_GRID_DISTANCE
             print(f"{Fore.CYAN}Wybrano eksport rozrzedzonej siatki z parametrem odległości: {sparse_grid_distance} m{Style.RESET_ALL}")
-            # --- Nowy fragment: pytanie o zakres opracowania ---
-            zakres_resp = input(f"\n{Fore.YELLOW}Czy porównanie i eksport rozrzedzonej siatki wykonać tylko w zakresie opracowania? [t/n] (domyślnie: t): ").strip().lower()
-            if not zakres_resp or zakres_resp in ['t', 'tak', 'y', 'yes']:
-                zakres_file = get_file_path("Podaj ścieżkę do pliku z zakresem opracowania (TXT, CSV, XLS, XLSX, 2 lub 3 kolumny XY/nrXY): ")
-                print(f"{Fore.CYAN}Wybrano zakres opracowania na podstawie pliku: {zakres_file}{Style.RESET_ALL}")
-            else:
-                print(f"{Fore.CYAN}Eksport rozrzedzonej siatki zostanie wykonany dla całego obszaru danych wejściowych.{Style.RESET_ALL}")
-        else:
-            print(f"{Fore.CYAN}Eksport rozrzedzonej siatki nie zostanie wykonany.{Style.RESET_ALL}")
+            zakres_file = get_file_path("Podaj ścieżkę do pliku z zakresem opracowania (wierzchołki wieloboku): ")
+            zakres_df = load_data(zakres_file, False)
+
     print(f"\n{Fore.CYAN}--- Wczytywanie danych ---{Style.RESET_ALL}")
     input_df = load_data(input_file, swap_input)
     if input_df is None or input_df.empty:
@@ -564,6 +638,32 @@ def main():
         if 'h' in comparison_df.columns:
             comparison_df['h'] = comparison_df['h'].round(round_decimals)
     results_df = process_data(input_df, comparison_df, choice in [2, 3], max_distance, geoportal_tolerance, round_decimals)
+
+    # --- Eksport rozrzedzonej siatki po przetworzeniu danych ---
+    if sparse_grid_requested:
+        if zakres_df is not None and not zakres_df.empty and 'osiaga_dokladnosc' in results_df.columns:
+            print(f"{Fore.CYAN}\n--- Przetwarzanie rozrzedzonej siatki ---{Style.RESET_ALL}")
+            punkty_dokladne_df = results_df[results_df['osiaga_dokladnosc'] == 'Tak'].copy()
+            if punkty_dokladne_df.empty:
+                print(f"{Fore.YELLOW}Brak punktów spełniających kryterium dokładności. Nie można wygenerować siatki.")
+            else:
+                obszar_wielokat = zakres_df[['x', 'y']].values
+                wyniki_siatki_df = znajdz_punkty_dla_siatki(punkty_dokladne_df, obszar_wielokat, sparse_grid_distance)
+                if not wyniki_siatki_df.empty:
+                    output_siatka_csv = 'wynik_siatka.csv'
+                    output_siatka_gpkg = 'wynik_siatka.gpkg'
+                    wyniki_siatki_df.to_csv(output_siatka_csv, sep=';', index=False, float_format=f'%.{round_decimals}f', na_rep='brak_danych')
+                    print(f"{Fore.GREEN}Wyniki rozrzedzonej siatki zapisano w pliku CSV: {os.path.abspath(output_siatka_csv)}{Style.RESET_ALL}")
+                    export_to_geopackage(wyniki_siatki_df, input_df, output_siatka_gpkg, layer_name="wynik_siatki", round_decimals=round_decimals)
+                else:
+                    print(f"{Fore.YELLOW}Nie udało się wygenerować żadnych punktów dla rozrzedzonej siatki.")
+        else:
+            if zakres_df is None or zakres_df.empty:
+                print(f"{Fore.RED}Nie udało się wczytać danych zakresu. Przetwarzanie siatki przerwane.")
+            if 'osiaga_dokladnosc' not in results_df.columns:
+                print(f"{Fore.RED}Brak kolumny 'osiaga_dokladnosc' w wynikach. Przetwarzanie siatki przerwane.")
+
+    # --- Standardowy eksport wyników ---
     if not results_df.empty:
         print(f"\n{Fore.CYAN}--- Zapisywanie wyników ---{Style.RESET_ALL}")
         output_csv_file = 'wynik.csv'
