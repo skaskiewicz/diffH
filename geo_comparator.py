@@ -42,7 +42,7 @@ def get_user_choice() -> int:
     while True:
         print(f"\n{Fore.YELLOW}Wybierz rodzaj porównania:\n[1] Porównaj plik wejściowy z drugim plikiem\n[2] Porównaj plik wejściowy z danymi z Geoportal.gov.pl\n[3] Porównaj plik wejściowy z drugim plikiem ORAZ z Geoportal.gov.pl")
         try:
-            choice = int(input("\nTwój wybór (1-3): "))
+            choice = int(input(f"\n{Fore.YELLOW}Twój wybór (1-3): {Style.RESET_ALL}"))
             if 1 <= choice <= 3:
                 return choice
             print(f"{Fore.RED}Błąd: Wybierz liczbę od 1 do 3.")
@@ -79,7 +79,7 @@ def get_max_distance() -> float:
 def ask_swap_xy(file_label: str) -> bool:
     default = 'n'
     while True:
-        resp = input(f"Czy plik {file_label} ma zamienioną kolejność kolumn (Y,X zamiast X,Y)? [t/n] (domyślnie: n): ").strip().lower()
+        resp = input(f"{Fore.YELLOW}Czy plik {file_label} ma zamienioną kolejność kolumn (Y,X zamiast X,Y)? [t/n] (domyślnie: n): {Style.RESET_ALL}").strip().lower()
         if not resp:
             print(f"{Fore.CYAN}Przyjęto domyślną odpowiedź: {default}{Style.RESET_ALL}")
             return False
@@ -87,7 +87,7 @@ def ask_swap_xy(file_label: str) -> bool:
             return True
         if resp in ['n', 'nie', 'no']:
             return False
-        print("Wpisz 't' (tak) lub 'n' (nie).")
+        print(f"{Fore.YELLOW}Wpisz 't' (tak) lub 'n' (nie).{Style.RESET_ALL}")
 
 def get_geoportal_tolerance() -> float:
     default_tolerance = 0.2
@@ -144,7 +144,7 @@ def load_data(file_path: str, swap_xy: bool = False) -> Optional[pd.DataFrame]:
                 return df
             elif len(df.columns) == 3:
                 print(f"{Fore.YELLOW}Wykryto 3 kolumny (brak numeru punktu).")
-                prefix = input("Podaj prefiks dla numeracji punktów (np. P): ").strip() or "P"
+                prefix = input(f"{Fore.YELLOW}Podaj prefiks dla numeracji punktów (np. P): {Style.RESET_ALL}").strip() or "P"
                 df.columns = ['x', 'y', 'h']
                 df.insert(0, 'id', [f"{prefix}_{i+1}" for i in range(len(df))])
                 print(f"{Fore.GREEN}Dodano automatyczną numerację punktów z prefiksem '{prefix}'.")
@@ -219,7 +219,7 @@ def get_source_epsg(easting_coordinate: float) -> Optional[int]:
         return None
     return None
 
-# === NOWE FUNKCJE ROBOCZE DLA RÓWNOLEGŁOŚCI ===
+# === FUNKCJE ROBOCZE DLA RÓWNOLEGŁOŚCI ===
 def worker_transform(point_data_with_index: Tuple[int, float, float]) -> Optional[Tuple[float, float]]:
     """
     Worker function for parallel coordinate transformation.
@@ -251,10 +251,6 @@ def worker_transform(point_data_with_index: Tuple[int, float, float]) -> Optiona
 def log_to_file(filename: str, message: str):
     with open(filename, 'a', encoding='utf-8') as f:
         f.write(message + '\n')
-
-# Flagi do jednorazowego logowania adresu URL i odpowiedzi Geoportalu
-_geoportal_url_logged = False
-_geoportal_response_logged = False
 
 def fetch_height_batch(batch: List[Tuple[float, float]]) -> Dict[str, float]:
     if not batch:
@@ -321,7 +317,7 @@ def fetch_missing_heights(missing_points: List[Tuple[float, float]]) -> Dict[str
         log_to_file(log_file, f"Ponowna próba pobrania wysokości dla {len(missing_points)} punktów z 'brak_danych'.")
     return fetch_height_batch(missing_points)
 
-# === ZAKTUALIZOWANE FUNKCJE GEOPRZETWARZANIA ===
+# === FUNKCJE GEOPRZETWARZANIA ===
 def transform_coordinates_parallel(df: pd.DataFrame) -> List[Optional[Tuple[float, float]]]:
     """
     Prepares data and runs parallel coordinate transformation, now with index passing for logging.
@@ -379,7 +375,7 @@ def get_geoportal_heights_concurrent(transformed_points: List[Optional[Tuple[flo
     log_to_file("log.txt", f"Łącznie pobrano wysokości dla {len(all_heights)} punktów z Geoportalu.")
     return all_heights
 
-# === Nowe funkcje do generowania rozrzedzonej siatki ===
+# === funkcje do generowania rozrzedzonej siatki ===
 def generuj_srodki_heksagonalne(obszar_wielokat: np.ndarray, odleglosc_miedzy_punktami: float) -> np.ndarray:
     """
     Generuje i filtruje środki okręgów w siatce heksagonalnej wewnątrz zadanego wieloboku.
@@ -453,6 +449,48 @@ def znajdz_punkty_dla_siatki(punkty_kandydaci: pd.DataFrame, obszar_wielokat: np
     return pd.DataFrame(wyniki_siatki).reset_index(drop=True)
 
 # === Funkcje zapisu i przetwarzania ===
+def export_to_csv(results_df: pd.DataFrame, csv_path: str, round_decimals: int = 1):
+    """
+    Eksportuje wyniki do plików CSV:
+    1. Plik główny ze wszystkimi wynikami.
+    2. Plik z wynikami spełniającymi kryterium dokładności.
+    3. Plik z wynikami niespełniającymi kryterium.
+    """
+    if results_df.empty:
+        print(f"{Fore.YELLOW}Brak danych do zapisu w CSV.")
+        return
+
+    # 1. Eksport całościowy
+    results_df.to_csv(csv_path, sep=';', index=False, float_format=f'%.{round_decimals}f', na_rep='brak_danych')
+    print(f"{Fore.GREEN}Wyniki tabelaryczne (wszystkie) zapisano w: {os.path.abspath(csv_path)}{Style.RESET_ALL}")
+
+    # Sprawdzenie, czy istnieje kolumna do podziału
+    if 'osiaga_dokladnosc' not in results_df.columns:
+        print(f"{Fore.YELLOW}Brak kolumny 'osiaga_dokladnosc', nie można podzielić plików CSV.")
+        return
+
+    # Przygotowanie do podziału
+    df_copy = results_df.copy()
+    df_copy['eksport'] = df_copy['osiaga_dokladnosc'].apply(lambda x: str(x).strip().lower() == 'tak')
+
+    # 2. Eksport tylko spełniających warunek dokładności
+    df_ok = df_copy[df_copy['eksport']].drop(columns=['eksport'])
+    if not df_ok.empty:
+        path_ok = csv_path.replace('.csv', '_dokladne.csv')
+        df_ok.to_csv(path_ok, sep=';', index=False, float_format=f'%.{round_decimals}f', na_rep='brak_danych')
+        print(f"{Fore.GREEN}Wyniki spełniające warunek dokładności zapisano w: {os.path.abspath(path_ok)}{Style.RESET_ALL}")
+    else:
+        print(f"{Fore.YELLOW}Brak punktów spełniających warunek dokładności do eksportu CSV.")
+
+    # 3. Eksport niespełniających warunku dokładności
+    df_nok = df_copy[~df_copy['eksport']].drop(columns=['eksport'])
+    if not df_nok.empty:
+        path_nok = csv_path.replace('.csv', '_niedokladne.csv')
+        df_nok.to_csv(path_nok, sep=';', index=False, float_format=f'%.{round_decimals}f', na_rep='brak_danych')
+        print(f"{Fore.GREEN}Wyniki niespełniające warunku dokładności zapisano w: {os.path.abspath(path_nok)}{Style.RESET_ALL}")
+    else:
+        print(f"{Fore.YELLOW}Brak punktów niespełniających warunku dokładności do eksportu CSV.")
+
 def export_to_geopackage(results_df: pd.DataFrame, input_df: pd.DataFrame, gpkg_path: str, layer_name: str = "wyniki", round_decimals: int = 1):
     if results_df.empty:
         print(f"{Fore.YELLOW}Brak danych do zapisu w GeoPackage.")
@@ -593,12 +631,12 @@ def main():
     choice = get_user_choice()
     max_distance = get_max_distance() if choice in [1, 3] else 0.0
     round_decimals = get_round_decimals()
-    input_file = get_file_path("\nPodaj ścieżkę do pliku wejściowego: ")
+    input_file = get_file_path(f"\n{Fore.YELLOW}Podaj ścieżkę do pliku wejściowego: {Style.RESET_ALL}")
     swap_input = ask_swap_xy("wejściowego")
     comparison_file = None
-    swap_comparison = False  # Inicjalizacja zmiennej
+    swap_comparison = False
     if choice in [1, 3]:
-        comparison_file = get_file_path("Podaj ścieżkę do pliku porównawczego: ")
+        comparison_file = get_file_path(f"{Fore.YELLOW}Podaj ścieżkę do pliku porównawczego: {Style.RESET_ALL}")
         swap_comparison = ask_swap_xy("porównawczego")
     geoportal_tolerance = get_geoportal_tolerance() if choice in [2, 3] else None
 
@@ -610,7 +648,7 @@ def main():
         resp = input(f"\n{Fore.YELLOW}Czy wykonać eksport rozrzedzonej siatki dla punktów spełniających dokładność? [t/n] (domyślnie: n): ").strip().lower()
         if resp in ['t', 'tak', 'y', 'yes']:
             sparse_grid_requested = True
-            dist_prompt = f"Podaj oczekiwaną odległość pomiędzy punktami siatki (w metrach, domyślnie: {DEFAULT_SPARSE_GRID_DISTANCE}): "
+            dist_prompt = f"{Fore.YELLOW}Podaj oczekiwaną odległość pomiędzy punktami siatki (w metrach, domyślnie: {DEFAULT_SPARSE_GRID_DISTANCE}): {Style.RESET_ALL}"
             dist_val = input(dist_prompt).strip()
             if dist_val:
                 try:
@@ -622,7 +660,7 @@ def main():
                 except ValueError:
                     print(f"{Fore.RED}Błąd: Wprowadzono niepoprawną liczbę. Przyjęto domyślną wartość {DEFAULT_SPARSE_GRID_DISTANCE} m.")
             print(f"{Fore.CYAN}Wybrano eksport rozrzedzonej siatki z parametrem odległości: {sparse_grid_distance} m{Style.RESET_ALL}")
-            zakres_file = get_file_path("Podaj ścieżkę do pliku z zakresem opracowania (wierzchołki wieloboku): ")
+            zakres_file = get_file_path(f"{Fore.YELLOW}Podaj ścieżkę do pliku z zakresem opracowania (wierzchołki wieloboku): {Style.RESET_ALL}")
             zakres_df = load_data(zakres_file, False)
 
     print(f"\n{Fore.CYAN}--- Wczytywanie danych ---{Style.RESET_ALL}")
@@ -666,11 +704,15 @@ def main():
     # --- Standardowy eksport wyników ---
     if not results_df.empty:
         print(f"\n{Fore.CYAN}--- Zapisywanie wyników ---{Style.RESET_ALL}")
+        
+        # Eksport do plików CSV
         output_csv_file = 'wynik.csv'
-        results_df.to_csv(output_csv_file, sep=';', index=False, float_format=f'%.{round_decimals}f', na_rep='brak_danych')
-        print(f"{Fore.GREEN}Wyniki tabelaryczne zapisano w: {os.path.abspath(output_csv_file)}{Style.RESET_ALL}")
+        export_to_csv(results_df, output_csv_file, round_decimals=round_decimals)
+
+        # Eksport do plików GeoPackage
         output_gpkg_file = 'wynik.gpkg'
         export_to_geopackage(results_df, input_df, output_gpkg_file, round_decimals=round_decimals)
+        
         print(f"\n{Fore.GREEN}Zakończono przetwarzanie pomyślnie!")
     else:
         print(f"{Fore.YELLOW}Nie wygenerowano żadnych wyników.")
@@ -684,4 +726,4 @@ if __name__ == "__main__":
         print(f"\n{Fore.RED}Wystąpił nieoczekiwany błąd globalny: {e}")
         traceback.print_exc()
     finally:
-        input("\nNaciśnij Enter, aby zakończyć...")
+        input(f"\n{Fore.YELLOW}Naciśnij Enter, aby zakończyć...{Style.RESET_ALL}")
