@@ -36,11 +36,22 @@ def display_welcome_screen():
     print(f"{Fore.GREEN}======================================")
     if DEBUG_MODE:
         print(f"{Fore.MAGENTA}*** TRYB DEBUGOWANIA AKTYWNY ***")
-    print(f"\n{Fore.WHITE}Instrukcja:\n1. Przygotuj plik wejściowy (CSV, TXT, XLS, XLSX) z danymi w układzie PL-2000.\n   Format: [id, x, y, h] lub [x, y, h]. Skrypt automatycznie wykryje strefę.\n2. Postępuj zgodnie z instrukcjami na ekranie.\n3. Wynik zostanie zapisany w plikach '{'wynik.csv'}' oraz '{'wynik.gpkg'}'.\n")
+    print(f"\n{Fore.WHITE}Instrukcja:")
+    print("1. Przygotuj plik wejściowy:")
+    print("   - Formaty: CSV, TXT, XLS, XLSX")
+    print("   - Układ współrzędnych: PL-2000 (strefy 5,6,7,8)")
+    print("   - Struktura: [id, x, y, h] lub [id, y, x, h] albo [x, y, h] lub [y, x, h]")
+    print("   - Separatory: średnik, przecinek lub spacja/tab")
+    print("\n2. Pliki wynikowe:")
+    print("   - Pełne wyniki: wynik.csv, wynik.gpkg")
+    print("   - Punkty spełniające dokładność: wynik_dokladne.csv, wynik_dokladne.gpkg")
+    print("   - Punkty niespełniające: wynik_niedokladne.csv, wynik_niedokladne.gpkg")
+    print("   - Opcjonalnie: wynik_siatka.csv, wynik_siatka.gpkg (siatka rozrzedzona)")
+    print(f"\n3. {Fore.CYAN}Postępuj zgodnie z instrukcjami na ekranie.{Style.RESET_ALL}\n")
 
 def get_user_choice() -> int:
     while True:
-        print(f"\n{Fore.YELLOW}Wybierz rodzaj porównania:\n[1] Porównaj plik wejściowy z drugim plikiem\n[2] Porównaj plik wejściowy z danymi z Geoportal.gov.pl\n[3] Porównaj plik wejściowy z drugim plikiem ORAZ z Geoportal.gov.pl")
+        print(f"\n{Fore.YELLOW}Wybierz rodzaj porównania wysokości punktów:\n[1] Porównanie z innym plikiem pomiarowym\n[2] Porównanie z danymi z Geoportal.gov.pl (NMT)\n[3] Porównanie z obydwoma źródłami (plik + Geoportal.gov.pl)")
         try:
             choice = int(input(f"\n{Fore.YELLOW}Twój wybór (1-3): {Style.RESET_ALL}"))
             if 1 <= choice <= 3:
@@ -51,7 +62,7 @@ def get_user_choice() -> int:
 
 def get_file_path(prompt: str) -> str:
     while True:
-        file_path = input(prompt).strip()
+        file_path = input(f"{Fore.YELLOW}{prompt}{Style.RESET_ALL}").strip()
         # Usuń tylko parę cudzysłowów lub apostrofów na początku i końcu
         if (file_path.startswith('"') and file_path.endswith('"')) or (file_path.startswith("'") and file_path.endswith("'")):
             file_path = file_path[1:-1]
@@ -422,14 +433,24 @@ def get_geoportal_heights_concurrent(transformed_points: List[Optional[Tuple[flo
         Dict[str, float]: Słownik z wysokościami w formacie {'northing easting': height}.
     """
     print(f"\n{Fore.CYAN}Pobieranie danych z Geoportalu ...{Style.RESET_ALL}")
+    
+    # Przygotowanie do logowania - czyszczenie starego pliku logu przy każdym uruchomieniu
+    log_file = "log.txt"
+    if DEBUG_MODE and os.path.exists(log_file):
+        os.remove(log_file)
+    
     valid_points = [p for p in transformed_points if p is not None]
-    log_to_file("log.txt", f"Liczba poprawnych punktów do pobrania wysokości: {len(valid_points)}")
+    if DEBUG_MODE:
+        log_to_file(log_file, f"Liczba poprawnych punktów do pobrania wysokości: {len(valid_points)}")
+    
     if not valid_points:
         print(f"{Fore.YELLOW}Brak poprawnych punktów do wysłania do API Geoportalu.")
         return {}
+    
     batch_size = 300
     batches = [valid_points[i:i + batch_size] for i in range(0, len(valid_points), batch_size)]
-    log_to_file("log.txt", f"Liczba partii do pobrania: {len(batches)} (po {batch_size} punktów)")
+    if DEBUG_MODE:
+        log_to_file(log_file, f"Liczba partii do pobrania: {len(batches)} (po {batch_size} punktów)")
     all_heights = {}
     with ThreadPoolExecutor(max_workers=CONCURRENT_API_REQUESTS) as executor:
         results = list(tqdm(executor.map(fetch_height_batch, batches), 
@@ -447,7 +468,8 @@ def get_geoportal_heights_concurrent(transformed_points: List[Optional[Tuple[flo
         all_heights.update(retry_heights)
         if DEBUG_MODE:
             log_to_file("geoportal_log.txt", f"Po ponownej próbie uzyskano wysokości dla {len(retry_heights)} z {len(missing_points)} brakujących punktów.")
-    log_to_file("log.txt", f"Łącznie pobrano wysokości dla {len(all_heights)} punktów z Geoportalu.")
+    if DEBUG_MODE:
+        log_to_file(log_file, f"Łącznie pobrano wysokości dla {len(all_heights)} punktów z Geoportalu.")
     return all_heights
 
 # === funkcje do generowania rozrzedzonej siatki ===
