@@ -60,6 +60,13 @@ def get_file_path(prompt: str) -> str:
         print(f"{Fore.RED}Błąd: Plik nie istnieje. Spróbuj ponownie.")
 
 def get_max_distance() -> float:
+    """
+    Funkcja do pobrania maksymalnej odległości wyszukiwania pary w metrach.
+    Domyślnie ustawiona na 15 metrów. Użytkownik może wpisać 0, aby pominąć ten warunek.
+    Jeśli użytkownik nie poda wartości, zostanie przyjęta domyślna wartość 15 metrów.
+    Returns:
+        float: Maksymalna odległość wyszukiwania pary w metrach.
+    """
     default_distance = 15.0
     while True:
         try:
@@ -77,6 +84,13 @@ def get_max_distance() -> float:
             print(f"{Fore.RED}Błąd: Wprowadź poprawną liczbę.{Style.RESET_ALL}")
 
 def ask_swap_xy(file_label: str) -> bool:
+    """ 
+    Funkcja do zapytania użytkownika, czy plik ma zamienioną kolejność kolumn (Y,X zamiast X,Y).
+    Args:
+        file_label (str): Etykieta pliku, która zostanie wyświetlona w komunikacie.
+    Returns:
+        bool: True jeśli kolumny są zamienione, False jeśli nie.
+    """
     default = 'n'
     while True:
         resp = input(f"{Fore.YELLOW}Czy plik {file_label} ma zamienioną kolejność kolumn (Y,X zamiast X,Y)? [t/n] (domyślnie: n): {Style.RESET_ALL}").strip().lower()
@@ -90,6 +104,12 @@ def ask_swap_xy(file_label: str) -> bool:
         print(f"{Fore.YELLOW}Wpisz 't' (tak) lub 'n' (nie).{Style.RESET_ALL}")
 
 def get_geoportal_tolerance() -> float:
+    """
+    Funkcja do pobrania dopuszczalnej różnicy wysokości względem Geoportalu w metrach.
+    Domyślnie ustawiona na 0.2 metra. Użytkownik może wpisać 0, aby pominąć ten warunek.
+    Returns:
+        float: Dopuszczalna różnica wysokości względem Geoportalu w metrach.
+    """
     default_tolerance = 0.2
     while True:
         try:
@@ -107,6 +127,12 @@ def get_geoportal_tolerance() -> float:
             print(f"{Fore.RED}Błąd: Wprowadź poprawną liczbę.{Style.RESET_ALL}")
 
 def get_round_decimals() -> int:
+    """
+    Funkcja do pobrania liczby miejsc po przecinku do zaokrąglenia danych wejściowych.
+    Domyślnie ustawiona na 1 miejsce po przecinku.
+    Returns:
+        int: Liczba miejsc po przecinku do zaokrąglenia danych wejściowych.
+    """
     default_decimals = 1
     while True:
         try:
@@ -124,6 +150,12 @@ def get_round_decimals() -> int:
 
 # === Funkcje wczytywania danych ===
 def load_data(file_path: str, swap_xy: bool = False) -> Optional[pd.DataFrame]:
+    """
+    Wczytuje dane z pliku CSV, XLS lub XLSX, sprawdza strukturę i zwraca DataFrame.
+    Args:
+        file_path (str): Ścieżka do pliku z danymi.
+    swap_xy (bool): Czy zamienić kolumny X i Y (domyślnie False).
+    """
     print(f"Wczytuję plik: {file_path}")
     try:
         file_ext = os.path.splitext(file_path)[1].lower()
@@ -192,6 +224,13 @@ def load_data(file_path: str, swap_xy: bool = False) -> Optional[pd.DataFrame]:
         return None
 
 def has_easting_structure(coord: float) -> bool:
+    """
+    Sprawdza, czy współrzędna ma strukturę wschodniej (easting) w układzie PL-2000.
+    Args:
+        coord (float): Współrzędna do sprawdzenia.
+    Returns:
+        bool: True jeśli współrzędna ma strukturę wschodniej, False w przeciwnym razie.
+    """
     try:
         coord_str = str(int(coord))
         return len(coord_str) == 7 and coord_str[0] in ['5', '6', '7', '8']
@@ -199,6 +238,14 @@ def has_easting_structure(coord: float) -> bool:
         return False
 
 def assign_geodetic_roles(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Funkcja przypisuje kolumnom 'geodetic_northing' i 'geodetic_easting' odpowiednie wartości
+    na podstawie struktury współrzędnych w DataFrame.
+    Args:
+        df (pd.DataFrame): DataFrame z kolumnami 'x' i 'y'.
+    Returns:
+        pd.DataFrame: DataFrame z dodanymi kolumnami 'geodetic_northing' i 'geodetic_easting'.
+    """
     if df.empty:
         return df
     first_row = df.iloc[0]
@@ -211,6 +258,13 @@ def assign_geodetic_roles(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 def get_source_epsg(easting_coordinate: float) -> Optional[int]:
+    """
+    Funkcja do określenia strefy EPSG na podstawie współrzędnej wschodniej (easting).
+    Args:
+        easting_coordinate (float): Współrzędna wschodnia do sprawdzenia.
+    Returns:
+        Optional[int]: Kod EPSG strefy, lub None jeśli nie można określić.
+    """
     try:
         easting_str = str(int(easting_coordinate))
         if len(easting_str) == 7:
@@ -221,10 +275,6 @@ def get_source_epsg(easting_coordinate: float) -> Optional[int]:
 
 # === FUNKCJE ROBOCZE DLA RÓWNOLEGŁOŚCI ===
 def worker_transform(point_data_with_index: Tuple[int, float, float]) -> Optional[Tuple[float, float]]:
-    """
-    Worker function for parallel coordinate transformation.
-    Logs detailed information in DEBUG_MODE.
-    """
     log_file = "transform_log.txt"
     index, northing, easting = point_data_with_index
     
@@ -253,6 +303,13 @@ def log_to_file(filename: str, message: str):
         f.write(message + '\n')
 
 def fetch_height_batch(batch: List[Tuple[float, float]]) -> Dict[str, float]:
+    """
+    Funkcja do pobierania wysokości z Geoportalu dla paczki współrzędnych.
+    Args:
+        batch (List[Tuple[float, float]]): Lista współrzędnych w formacie [(easting, northing), ...].
+    Returns:
+        Dict[str, float]: Słownik z wysokościami w formacie {'northing easting': height}.
+    """
     if not batch:
         return {}
     log_file = "geoportal_log.txt"
@@ -310,6 +367,13 @@ def fetch_height_batch(batch: List[Tuple[float, float]]) -> Dict[str, float]:
 
 # --- Dodatkowa funkcja do ponownego pobierania brakujących wysokości ---
 def fetch_missing_heights(missing_points: List[Tuple[float, float]]) -> Dict[str, float]:
+    """
+    Funkcja do ponownego pobierania wysokości dla punktów, które nie miały danych.
+    Args:
+        missing_points (List[Tuple[float, float]]): Lista współrzędnych punktów, dla których brakuje danych wysokości.
+    Returns:
+        Dict[str, float]: Słownik z wysokościami w formacie {'northing easting': height}.
+    """
     log_file = "geoportal_log.txt"
     if not missing_points:
         return {}
@@ -320,7 +384,11 @@ def fetch_missing_heights(missing_points: List[Tuple[float, float]]) -> Dict[str
 # === FUNKCJE GEOPRZETWARZANIA ===
 def transform_coordinates_parallel(df: pd.DataFrame) -> List[Optional[Tuple[float, float]]]:
     """
-    Prepares data and runs parallel coordinate transformation, now with index passing for logging.
+    Funkcja do równoległej transformacji współrzędnych geodezyjnych z układu PL-2000 do układu PL-1992 (EPSG:2180).
+    Args:
+        df (pd.DataFrame): DataFrame z kolumnami 'geodetic_northing' i 'geodetic_easting'.
+    Returns:
+        List[Optional[Tuple[float, float]]]: Lista przekształconych współrzędnych w formacie [(x, y), ...] lub None dla błędów.
     """
     print(f"\n{Fore.CYAN}Transformuję współrzędne ...{Style.RESET_ALL}")
     
@@ -346,6 +414,13 @@ def transform_coordinates_parallel(df: pd.DataFrame) -> List[Optional[Tuple[floa
     return results
 
 def get_geoportal_heights_concurrent(transformed_points: List[Optional[Tuple[float, float]]]) -> Dict[str, float]:
+    """
+    Funkcja do pobierania wysokości z Geoportalu dla przekształconych współrzędnych.
+    Args:
+        transformed_points (List[Optional[Tuple[float, float]]]): Lista przekształconych współrzędnych w formacie [(x, y), ...] lub None dla błędów.
+    Returns:
+        Dict[str, float]: Słownik z wysokościami w formacie {'northing easting': height}.
+    """
     print(f"\n{Fore.CYAN}Pobieranie danych z Geoportalu ...{Style.RESET_ALL}")
     valid_points = [p for p in transformed_points if p is not None]
     log_to_file("log.txt", f"Liczba poprawnych punktów do pobrania wysokości: {len(valid_points)}")
@@ -492,6 +567,9 @@ def export_to_csv(results_df: pd.DataFrame, csv_path: str, round_decimals: int =
         print(f"{Fore.YELLOW}Brak punktów niespełniających warunku dokładności do eksportu CSV.")
 
 def export_to_geopackage(results_df: pd.DataFrame, input_df: pd.DataFrame, gpkg_path: str, layer_name: str = "wyniki", round_decimals: int = 1):
+    """
+    Eksportuje wyniki do pliku GeoPackage.
+    """
     if results_df.empty:
         print(f"{Fore.YELLOW}Brak danych do zapisu w GeoPackage.")
         return
@@ -545,6 +623,10 @@ def process_data(input_df: pd.DataFrame,
                 max_distance: float,
                 geoportal_tolerance: Optional[float] = None,
                 round_decimals: int = 1) -> pd.DataFrame:
+    """
+    Główna funkcja przetwarzająca dane wejściowe, wykonująca transformację współrzędnych,
+    porównanie z danymi referencyjnymi oraz eksport wyników do pliku GeoPackage.
+    """
     results = []
     input_df = assign_geodetic_roles(input_df)
     log_file = "przetwarzanie_log.txt"
