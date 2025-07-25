@@ -14,10 +14,11 @@ from concurrent.futures import ThreadPoolExecutor
 import traceback
 import numpy as np
 from matplotlib.path import Path
+import logging
 
 # ==============================================================================
 # === KONFIGURACJA SKRYPTU ===
-DEBUG_MODE = False
+DEBUG_MODE = True
 CONCURRENT_API_REQUESTS = 10
 API_MAX_RETRIES = 5
 ROUND_INPUT_DECIMALS = 1  # domyślna liczba miejsc po przecinku do zaokrąglania
@@ -25,6 +26,29 @@ DEFAULT_SPARSE_GRID_DISTANCE = 25.0  # domyślna odległość siatki rozrzedzone
 # ======================================================================
 
 init(autoreset=True)
+
+
+# === NOWA FUNKCJA DO KONFIGURACJI LOGOWANIA ===
+def setup_logging():
+    """Konfiguruje system logowania, jeśli DEBUG_MODE jest włączony."""
+    if DEBUG_MODE:
+        log_file = "debug.log"
+        # Usuń stary plik logu, jeśli istnieje
+        if os.path.exists(log_file):
+            os.remove(log_file)
+
+        # Skonfiguruj logger, aby zapisywał do pliku
+        logging.basicConfig(
+            level=logging.DEBUG,
+            format="%(asctime)s - %(levelname)s - %(message)s",
+            filename=log_file,
+            filemode="w",
+            encoding='utf-8'
+        )
+        logging.debug("Tryb debugowania aktywny. Logi zapisywane do debug.log")
+    else:
+        # Jeśli tryb debugowania jest wyłączony, wyłącz logowanie
+        logging.disable(logging.CRITICAL)
 
 
 # === Funkcje pomocnicze interfejsu użytkownika ===
@@ -37,7 +61,7 @@ def display_welcome_screen():
     print(f"{Fore.GREEN}===           diffH               ===")
     print(f"{Fore.GREEN}======================================")
     if DEBUG_MODE:
-        print(f"{Fore.MAGENTA}*** TRYB DEBUGOWANIA AKTYWNY ***")
+        print(f"{Fore.MAGENTA}*** TRYB DEBUGOWANIA AKTYWNY (logi w pliku debug.log) ***")
     print(f"\n{Fore.WHITE}Instrukcja:")
     print("1. Przygotuj plik wejściowy:")
     print("   - Formaty: CSV, TXT, XLS, XLSX")
@@ -198,6 +222,7 @@ def load_scope_data(file_path: str, swap_xy: bool = False) -> Optional[pd.DataFr
     Sprawdza, czy kolumny współrzędnych są numeryczne.
     """
     print(f"Wczytuję plik z zakresem: {file_path}")
+    logging.debug(f"Rozpoczęto wczytywanie pliku zakresu: {file_path}, swap_xy={swap_xy}")
     df = None
     try:
         file_ext = os.path.splitext(file_path)[1].lower()
@@ -220,14 +245,17 @@ def load_scope_data(file_path: str, swap_xy: bool = False) -> Optional[pd.DataFr
                         df = temp_df
                         sep_display = "spacja/tab" if sep == r"\s+" else sep
                         print(f"{Fore.GREEN}Plik wczytany poprawnie (separator: '{sep_display}').")
+                        logging.debug(f"Plik zakresu wczytany z separatorem '{sep_display}'.")
                         break
                 except pd.errors.ParserError:
+                    logging.debug(f"Nie udało się sparsować pliku zakresu z separatorem '{sep}'. Próbuję dalej.")
                     continue
 
         if df is None:
             print(
                 f"{Fore.RED}Błąd: Nie udało się wczytać pliku zakresu lub ma on niepoprawną liczbę kolumn (oczekiwano 2 lub 3)."
             )
+            logging.error("Nie udało się wczytać pliku zakresu - nie znaleziono separatora lub niepoprawna liczba kolumn.")
             return None
 
         # Pomijanie nagłówka - sprawdzamy każdy element osobno
@@ -248,6 +276,7 @@ def load_scope_data(file_path: str, swap_xy: bool = False) -> Optional[pd.DataFr
                 print(
                     f"{Fore.YELLOW}Wykryto nagłówek w pliku zakresu. Pierwszy wiersz zostanie pominięty.{Style.RESET_ALL}"
                 )
+                logging.debug(f"Wykryto i pominięto nagłówek w pliku zakresu: {df.iloc[0].to_list()}")
                 df = df.iloc[1:].reset_index(drop=True)
 
         # Jeśli po usunięciu nagłówka ramka jest pusta
@@ -255,6 +284,7 @@ def load_scope_data(file_path: str, swap_xy: bool = False) -> Optional[pd.DataFr
             print(
                 f"{Fore.RED}Błąd: Plik zakresu jest pusty lub zawierał tylko nagłówek."
             )
+            logging.error("Plik zakresu jest pusty po usunięciu nagłówka.")
             return None
 
         # Przypisanie nazw kolumn
@@ -262,9 +292,11 @@ def load_scope_data(file_path: str, swap_xy: bool = False) -> Optional[pd.DataFr
             df.columns = ["x", "y"]
         else:  # len == 3
             df.columns = ["id", "x", "y"]
+        logging.debug(f"Przypisano kolumny: {df.columns.to_list()}")
 
         if swap_xy:
             df[["x", "y"]] = df[["y", "x"]]
+            logging.debug("Zamieniono kolumny X i Y w pliku zakresu.")
 
         # Walidacja numeryczności kolumn X i Y
         for col in ["x", "y"]:
@@ -276,14 +308,17 @@ def load_scope_data(file_path: str, swap_xy: bool = False) -> Optional[pd.DataFr
             print(
                 f"{Fore.RED}Błąd: Plik zakresu zawiera nienumeryczne wartości w kolumnach współrzędnych. Popraw plik i spróbuj ponownie."
             )
+            logging.error("Plik zakresu zawiera nienumeryczne wartości w kolumnach X/Y.")
             return None
 
         df.dropna(subset=["x", "y"], inplace=True)
         print(f"Wczytano {len(df)} wierzchołków zakresu.")
+        logging.debug(f"Pomyślnie wczytano i przetworzono {len(df)} wierzchołków zakresu.")
         return df
 
     except Exception as e:
         print(f"{Fore.RED}Błąd podczas wczytywania pliku zakresu: {e}")
+        logging.error(f"Nieoczekiwany błąd podczas wczytywania pliku zakresu: {e}", exc_info=True)
         return None
 
 
@@ -296,6 +331,7 @@ def load_data(file_path: str, swap_xy: bool = False) -> Optional[pd.DataFrame]:
     swap_xy (bool): Czy zamienić kolumny X i Y (domyślnie False).
     """
     print(f"Wczytuję plik danych: {file_path}")
+    logging.debug(f"Rozpoczęto wczytywanie pliku danych: {file_path}, swap_xy={swap_xy}")
     df = None
     try:
         # 1. Wczytanie surowych danych do DataFrame
@@ -320,12 +356,14 @@ def load_data(file_path: str, swap_xy: bool = False) -> Optional[pd.DataFrame]:
                     print(
                         f"{Fore.GREEN}Plik wczytany poprawnie (separator: '{sep_display}')."
                     )
+                    logging.debug(f"Plik danych wczytany z separatorem '{sep_display}'.")
                     break
 
         if df is None:
             print(
                 f"{Fore.RED}Nie udało się rozpoznać separatora lub plik nie ma poprawnej struktury."
             )
+            logging.error("Nie udało się wczytać pliku danych - nie znaleziono separatora lub niepoprawna struktura.")
             return None
 
         # 2. Pomijanie nagłówka
@@ -337,15 +375,18 @@ def load_data(file_path: str, swap_xy: bool = False) -> Optional[pd.DataFrame]:
                 print(
                     f"{Fore.YELLOW}Wykryto nagłówek w pliku. Pierwszy wiersz zostanie pominięty.{Style.RESET_ALL}"
                 )
+                logging.debug(f"Wykryto i pominięto nagłówek w pliku danych: {df.iloc[0].to_list()}")
                 df = df.iloc[1:].reset_index(drop=True)
 
         # 3. Logika walidacji i przypisywania kolumn
         num_cols = len(df.columns)
+        logging.debug(f"Wykryto {num_cols} kolumn w pliku danych.")
         if num_cols >= 4:
             if num_cols > 4:
                 print(
                     f"{Fore.YELLOW}Wykryto więcej niż 4 kolumny. Importowane będą tylko pierwsze 4."
                 )
+                logging.warning(f"Wykryto {num_cols} kolumn, użyte zostaną tylko pierwsze 4.")
             df = df.iloc[:, :4]
             df.columns = ["id", "x", "y", "h"]
 
@@ -363,6 +404,7 @@ def load_data(file_path: str, swap_xy: bool = False) -> Optional[pd.DataFrame]:
                     f"{Fore.RED}Błąd: Plik ma 3 kolumny, ale nie wszystkie są numeryczne. Oczekiwano formatu X,Y,H."
                 )
                 print(f"{Fore.RED}Popraw plik.")
+                logging.error("Plik ma 3 kolumny, ale nie wszystkie są numeryczne.")
                 return None
 
             # Jeśli walidacja się powiodła
@@ -378,16 +420,19 @@ def load_data(file_path: str, swap_xy: bool = False) -> Optional[pd.DataFrame]:
             print(
                 f"{Fore.GREEN}Dodano automatyczną numerację punktów z prefiksem '{prefix}'."
             )
+            logging.debug(f"Dodano autonumerację z prefiksem '{prefix}'.")
 
         else:
             print(
                 f"{Fore.RED}Błąd: Plik musi mieć 3 lub 4 kolumny (wykryto: {num_cols}). Import przerwany."
             )
+            logging.error(f"Niepoprawna liczba kolumn: {num_cols}. Oczekiwano 3 lub 4.")
             return None
 
         # 4. Zamiana X/Y i konwersja na typy numeryczne
         if swap_xy:
             df[["x", "y"]] = df[["y", "x"]]
+            logging.debug("Zamieniono kolumny X i Y w pliku danych.")
 
         for col in ["x", "y", "h"]:
             df[col] = pd.to_numeric(
@@ -396,10 +441,12 @@ def load_data(file_path: str, swap_xy: bool = False) -> Optional[pd.DataFrame]:
 
         df.dropna(subset=["x", "y", "h"], inplace=True)
         print(f"Wczytano {len(df)} wierszy.")
+        logging.debug(f"Pomyślnie wczytano i przetworzono {len(df)} wierszy danych.")
         return df
 
     except Exception as e:
         print(f"{Fore.RED}Błąd podczas wczytywania pliku danych: {e}")
+        logging.error(f"Nieoczekiwany błąd podczas wczytywania pliku danych: {e}", exc_info=True)
         return None
 
 
@@ -460,35 +507,22 @@ def get_source_epsg(easting_coordinate: float) -> Optional[int]:
 def worker_transform(
     point_data_with_index: Tuple[int, float, float],
 ) -> Optional[Tuple[float, float]]:
-    log_file = "transform_log.txt"
     index, northing, easting = point_data_with_index
 
     source_epsg = get_source_epsg(easting)
     if source_epsg is None:
-        if DEBUG_MODE:
-            message = f"Punkt {index + 1}: BŁĄD - Nie można określić strefy EPSG dla easting={easting}. Współrzędne (N, E): ({northing}, {easting})"
-            log_to_file(log_file, message)
+        logging.debug(f"Punkt {index + 1}: BŁĄD - Nie można określić strefy EPSG dla easting={easting}. Współrzędne (N, E): ({northing}, {easting})")
         return None
     try:
         transformer = Transformer.from_crs(
             f"EPSG:{source_epsg}", "EPSG:2180", always_xy=True
         )
         x_out, y_out = transformer.transform(easting, northing)
-        if DEBUG_MODE:
-            message = f"Punkt {index + 1}: OK. Oryginalne (N, E)=({northing}, {easting}) -> Transformowane (X, Y)=({x_out:.2f}, {y_out:.2f})"
-            log_to_file(log_file, message)
+        logging.debug(f"Punkt {index + 1}: OK. Oryginalne (N, E)=({northing}, {easting}) -> Transformowane (X, Y)=({x_out:.2f}, {y_out:.2f})")
         return x_out, y_out
     except CRSError as e:
-        if DEBUG_MODE:
-            message = f"Punkt {index + 1}: BŁĄD transformacji (CRSError) dla (N, E)=({northing}, {easting}). Błąd: {e}"
-            log_to_file(log_file, message)
+        logging.debug(f"Punkt {index + 1}: BŁĄD transformacji (CRSError) dla (N, E)=({northing}, {easting}). Błąd: {e}")
         return None
-
-
-# === LOGOWANIE DO PLIKÓW ===
-def log_to_file(filename: str, message: str):
-    with open(filename, "a", encoding="utf-8") as f:
-        f.write(message + "\n")
 
 
 def fetch_height_batch(batch: List[Tuple[float, float]]) -> Dict[str, float]:
@@ -501,7 +535,6 @@ def fetch_height_batch(batch: List[Tuple[float, float]]) -> Dict[str, float]:
     """
     if not batch:
         return {}
-    log_file = "geoportal_log.txt"
     # Usuwanie duplikatów z paczki (API zwraca wysokość dla każdej współrzędnej, ale klucz w słowniku bywa nadpisany)
     unique_batch = list(dict.fromkeys(batch))
     point_strings = [
@@ -513,15 +546,10 @@ def fetch_height_batch(batch: List[Tuple[float, float]]) -> Dict[str, float]:
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
     }
     for attempt in range(1, API_MAX_RETRIES + 1):
-        if DEBUG_MODE:
-            log_to_file(log_file, f"Wysyłka do Geoportalu (próba {attempt}): URL={url}")
+        logging.debug(f"Wysyłka do Geoportalu (próba {attempt}): URL={url}")
         try:
             response = requests.get(url, timeout=30, headers=headers)
-            if DEBUG_MODE:
-                log_to_file(
-                    log_file,
-                    f"Odpowiedź: status={response.status_code}, body={response.text}",
-                )
+            logging.debug(f"Odpowiedź: status={response.status_code}, body={response.text}")
             response.raise_for_status()
             batch_heights = {}
             if response.text.strip():
@@ -541,28 +569,18 @@ def fetch_height_batch(batch: List[Tuple[float, float]]) -> Dict[str, float]:
                             batch_heights[key] = 0.0
                 # Jeśli wszystkie wysokości to 0.0, powtórz zapytanie (chyba że to ostatnia próba)
                 if all_zero and attempt < API_MAX_RETRIES:
-                    if DEBUG_MODE:
-                        log_to_file(
-                            log_file,
-                            "Ostrzeżenie: Wszystkie wysokości 0.0, ponawiam próbę...",
-                        )
+                    logging.warning("Ostrzeżenie: Wszystkie wysokości 0.0, ponawiam próbę...")
                     continue
                 return batch_heights
             else:
-                if DEBUG_MODE:
-                    log_to_file(log_file, "Pusta odpowiedź, ponawiam próbę...")
+                logging.warning("Pusta odpowiedź, ponawiam próbę...")
                 continue
         except requests.exceptions.RequestException as e:
-            if DEBUG_MODE:
-                log_to_file(log_file, f"Błąd komunikacji z API (próba {attempt}): {e}")
+            logging.error(f"Błąd komunikacji z API (próba {attempt}): {e}")
             if attempt == API_MAX_RETRIES:
                 print(f"{Fore.RED}Błąd komunikacji z API: {e}")
     # Jeśli po wszystkich próbach nie udało się uzyskać poprawnych danych
-    if DEBUG_MODE:
-        log_to_file(
-            log_file,
-            f"Nie udało się uzyskać poprawnych danych z Geoportalu po {API_MAX_RETRIES} próbach.",
-        )
+    logging.error(f"Nie udało się uzyskać poprawnych danych z Geoportalu po {API_MAX_RETRIES} próbach.")
     return {}
 
 
@@ -577,14 +595,9 @@ def fetch_missing_heights(
     Returns:
         Dict[str, float]: Słownik z wysokościami w formacie {'northing easting': height}.
     """
-    log_file = "geoportal_log.txt"
     if not missing_points:
         return {}
-    if DEBUG_MODE:
-        log_to_file(
-            log_file,
-            f"Ponowna próba pobrania wysokości dla {len(missing_points)} punktów z 'brak_danych'.",
-        )
+    logging.debug(f"Ponowna próba pobrania wysokości dla {len(missing_points)} punktów z 'brak_danych'.")
     return fetch_height_batch(missing_points)
 
 
@@ -600,11 +613,7 @@ def transform_coordinates_parallel(
         List[Optional[Tuple[float, float]]]: Lista przekształconych współrzędnych w formacie [(x, y), ...] lub None dla błędów.
     """
     print(f"\n{Fore.CYAN}Transformuję współrzędne ...{Style.RESET_ALL}")
-
-    # Przygotowanie do logowania - czyszczenie starego pliku logu przy każdym uruchomieniu
-    log_file = "transform_log.txt"
-    if DEBUG_MODE and os.path.exists(log_file):
-        os.remove(log_file)
+    logging.debug("Rozpoczęto równoległą transformację współrzędnych.")
 
     # Przygotowujemy dane wejściowe jako (indeks, northing, easting)
     points_to_transform = list(
@@ -613,7 +622,6 @@ def transform_coordinates_parallel(
 
     results = []
     # Używamy puli procesów do równoległego przetwarzania
-    # Nie ma potrzeby sprawdzania DEBUG_MODE tutaj, worker sam zdecyduje czy logować
     with multiprocessing.Pool() as pool:
         # Używamy imap dla efektywnego przetwarzania z paskiem postępu
         results = list(
@@ -623,6 +631,7 @@ def transform_coordinates_parallel(
                 desc="Transformacja współrzędnych",
             )
         )
+    logging.debug(f"Zakończono transformację. Przetworzono {len(results)} punktów.")
     return results
 
 
@@ -637,18 +646,10 @@ def get_geoportal_heights_concurrent(
         Dict[str, float]: Słownik z wysokościami w formacie {'northing easting': height}.
     """
     print(f"\n{Fore.CYAN}Pobieranie danych z Geoportalu ...{Style.RESET_ALL}")
-
-    # Przygotowanie do logowania - czyszczenie starego pliku logu przy każdym uruchomieniu
-    log_file = "log.txt"
-    if DEBUG_MODE and os.path.exists(log_file):
-        os.remove(log_file)
+    logging.debug("Rozpoczęto pobieranie wysokości z Geoportalu.")
 
     valid_points = [p for p in transformed_points if p is not None]
-    if DEBUG_MODE:
-        log_to_file(
-            log_file,
-            f"Liczba poprawnych punktów do pobrania wysokości: {len(valid_points)}",
-        )
+    logging.debug(f"Liczba poprawnych punktów do pobrania wysokości: {len(valid_points)}")
 
     if not valid_points:
         print(f"{Fore.YELLOW}Brak poprawnych punktów do wysłania do API Geoportalu.")
@@ -659,11 +660,7 @@ def get_geoportal_heights_concurrent(
         valid_points[i : i + batch_size]
         for i in range(0, len(valid_points), batch_size)
     ]
-    if DEBUG_MODE:
-        log_to_file(
-            log_file,
-            f"Liczba partii do pobrania: {len(batches)} (po {batch_size} punktów)",
-        )
+    logging.debug(f"Liczba partii do pobrania: {len(batches)} (po {batch_size} punktów)")
     all_heights = {}
     with ThreadPoolExecutor(max_workers=CONCURRENT_API_REQUESTS) as executor:
         results = list(
@@ -684,16 +681,9 @@ def get_geoportal_heights_concurrent(
     if missing_points:
         retry_heights = fetch_missing_heights(missing_points)
         all_heights.update(retry_heights)
-        if DEBUG_MODE:
-            log_to_file(
-                "geoportal_log.txt",
-                f"Po ponownej próbie uzyskano wysokości dla {len(retry_heights)} z {len(missing_points)} brakujących punktów.",
-            )
-    if DEBUG_MODE:
-        log_to_file(
-            log_file,
-            f"Łącznie pobrano wysokości dla {len(all_heights)} punktów z Geoportalu.",
-        )
+        logging.debug(f"Po ponownej próbie uzyskano wysokości dla {len(retry_heights)} z {len(missing_points)} brakujących punktów.")
+
+    logging.debug(f"Łącznie pobrano wysokości dla {len(all_heights)} punktów z Geoportalu.")
     return all_heights
 
 
@@ -744,6 +734,7 @@ def znajdz_punkty_dla_siatki(
     :return: DataFrame z wynikami dla siatki.
     """
     promien_szukania = odleglosc_siatki / 2.0
+    logging.debug(f"Rozpoczęto znajdowanie punktów dla siatki. Odległość siatki: {odleglosc_siatki}m, promień szukania: {promien_szukania}m.")
     dane_punktow = (
         punkty_kandydaci[
             ["x_odniesienia", "y_odniesienia", "h_odniesienia", "geoportal_h"]
@@ -759,17 +750,26 @@ def znajdz_punkty_dla_siatki(
         print(
             f"{Fore.YELLOW}Nie wygenerowano żadnych punktów siatki wewnątrz zadanego obszaru."
         )
+        logging.warning("Nie wygenerowano żadnych środków siatki wewnątrz zadanego wieloboku.")
         return pd.DataFrame()
     print(f"Wygenerowano {len(lista_srodkow)} środków okręgów w zadanym obszarze.")
+    logging.debug(f"Wygenerowano {len(lista_srodkow)} środków siatki heksagonalnej.")
     odwiedzone_indeksy_w_np = set()
     wyniki_siatki = []
     for srodek in tqdm(lista_srodkow, desc="Przetwarzanie siatki heksagonalnej"):
+        logging.debug(f"Przetwarzanie środka heksagonu: ({srodek[0]:.2f}, {srodek[1]:.2f})")
         kandydaci_idx_w_np = drzewo_kd.query_ball_point(srodek, r=promien_szukania)
+        logging.debug(f"  Znaleziono {len(kandydaci_idx_w_np)} kandydatów w promieniu {promien_szukania:.2f}m.")
+        
         aktualni_kandydaci_idx = [
             idx for idx in kandydaci_idx_w_np if idx not in odwiedzone_indeksy_w_np
         ]
+        
         if not aktualni_kandydaci_idx:
+            logging.debug("  Brak nowych kandydatów w tym okręgu. Pomijam.")
             continue
+        logging.debug(f"  Po odfiltrowaniu odwiedzonych, pozostało {len(aktualni_kandydaci_idx)} kandydatów.")
+
         najlepszy_idx_w_np = min(
             aktualni_kandydaci_idx,
             key=lambda idx: (
@@ -777,12 +777,20 @@ def znajdz_punkty_dla_siatki(
                 np.linalg.norm(punkty_np[idx, :2] - srodek),
             ),
         )
+        
         odwiedzone_indeksy_w_np.add(najlepszy_idx_w_np)
         oryginalny_indeks_df = dane_punktow.index[najlepszy_idx_w_np]
         znaleziony_punkt_dane = punkty_kandydaci.loc[oryginalny_indeks_df]
+        
+        logging.debug(f"  Wybrano najlepszego kandydata: ID={znaleziony_punkt_dane['id_odniesienia']}, odległość od środka: {np.linalg.norm(punkty_np[najlepszy_idx_w_np, :2] - srodek):.2f}m, diff_h_geoportal: {abs(punkty_np[najlepszy_idx_w_np, 2] - punkty_np[najlepszy_idx_w_np, 3]):.3f}m")
+        
         wyniki_siatki.append(znaleziony_punkt_dane)
+        
     if not wyniki_siatki:
+        logging.warning("Nie znaleziono żadnych punktów do siatki po przetworzeniu wszystkich środków.")
         return pd.DataFrame()
+        
+    logging.debug(f"Zakończono przetwarzanie siatki. Wybrano {len(wyniki_siatki)} punktów.")
     return pd.DataFrame(wyniki_siatki).reset_index(drop=True)
 
 
@@ -862,7 +870,6 @@ def export_to_csv(results_df: pd.DataFrame, csv_path: str, round_decimals: int =
         )
 
 
-## (removed duplicate function definition line left by patch)
 def export_to_geopackage(results_df: pd.DataFrame, input_df: pd.DataFrame, gpkg_path: str, layer_name: str = "wyniki", round_decimals: int = 1, split_by_accuracy: bool = True):
     """
     Eksportuje wyniki do pliku GeoPackage.
@@ -880,10 +887,12 @@ def export_to_geopackage(results_df: pd.DataFrame, input_df: pd.DataFrame, gpkg_
         
     if source_epsg is None:
         print(f"{Fore.RED}Błąd: Nie można było ustalić źródłowego układu współrzędnych (EPSG). Plik GeoPackage nie zostanie utworzony.")
+        logging.error("Nie można ustalić źródłowego EPSG, eksport do GPKG przerwany.")
         return
     
     # Komunikat o układzie jest teraz w jednym miejscu, aby uniknąć powtórzeń
     print(f"\n{Fore.CYAN}Wykryto układ współrzędnych dla plików GeoPackage: EPSG:{source_epsg}{Style.RESET_ALL}")
+    logging.debug(f"Wykryto EPSG:{source_epsg} dla eksportu GeoPackage.")
     
     try:
         df_geo = results_df.copy()
@@ -928,6 +937,7 @@ def export_to_geopackage(results_df: pd.DataFrame, input_df: pd.DataFrame, gpkg_
             
     except Exception as e:
         print(f"{Fore.RED}Wystąpił błąd podczas tworzenia pliku GeoPackage: {e}")
+        logging.error(f"Błąd podczas eksportu do GeoPackage: {e}", exc_info=True)
 
 
 def process_data(
@@ -944,18 +954,20 @@ def process_data(
     """
     results = []
     input_df = assign_geodetic_roles(input_df)
-    log_file = "przetwarzanie_log.txt"
-    if DEBUG_MODE and os.path.exists(log_file):
-        os.remove(log_file)
+    logging.debug("Rozpoczęto główną funkcję przetwarzania danych 'process_data'.")
+    
     geoportal_heights, transformed_points = {}, []
     if use_geoportal:
         transformed_points = transform_coordinates_parallel(input_df)
         if transformed_points:
             geoportal_heights = get_geoportal_heights_concurrent(transformed_points)
+            
     tree_comparison = None
     if comparison_df is not None and not comparison_df.empty:
         comparison_points = comparison_df[["x", "y"]].values
         tree_comparison = KDTree(comparison_points)
+        logging.debug("Utworzono KDTree dla pliku porównawczego.")
+        
     paired_count = 0
     for i, (_, point) in enumerate(
         tqdm(input_df.iterrows(), total=len(input_df), desc="Przetwarzanie punktów")
@@ -988,6 +1000,7 @@ def process_data(
                 except (ValueError, TypeError):
                     row_data["diff_h"] = "brak_danych"
                 paired_count += 1
+                
         if use_geoportal and i < len(transformed_points):
             transformed_point = transformed_points[i]
             if transformed_point is not None:
@@ -996,11 +1009,8 @@ def process_data(
                 lookup_key = f"{northing_2180:.2f} {easting_2180:.2f}"
                 height = geoportal_heights.get(lookup_key, "brak_danych")
                 row_data["geoportal_h"] = str(height)
-                if height == "brak_danych" and DEBUG_MODE:
-                    log_to_file(
-                        log_file,
-                        f"Brak wysokości z Geoportalu dla punktu {i + 1} ({lookup_key})",
-                    )
+                if height == "brak_danych":
+                    logging.debug(f"Brak wysokości z Geoportalu dla punktu {point['id']} ({lookup_key})")
                 if height != "brak_danych" and pd.notnull(point["h"]):
                     try:
                         diff_h_geoportal = round(
@@ -1022,17 +1032,15 @@ def process_data(
             else:
                 row_data["geoportal_h"] = "brak_danych"
                 row_data["diff_h_geoportal"] = "brak_danych"
-                if DEBUG_MODE:
-                    log_to_file(
-                        log_file,
-                        f"Punkt {i + 1}: Brak przetransformowanych współrzędnych lub brak danych z geoportalu.",
-                    )
+                logging.debug(f"Punkt {point['id']}: Brak przetransformowanych współrzędnych lub brak danych z geoportalu.")
         results.append(row_data)
 
     if comparison_df is not None:
         print(
             f"{Fore.GREEN}Znaleziono i połączono {paired_count} par punktów.{Style.RESET_ALL}"
         )
+        logging.debug(f"Znaleziono i połączono {paired_count} par punktów.")
+        
     results_df = pd.DataFrame(results)
     if use_geoportal and "diff_h_geoportal" in results_df.columns:
         results_df["__abs_diff_h_geoportal"] = pd.to_numeric(
@@ -1041,6 +1049,7 @@ def process_data(
         results_df = results_df.sort_values(
             by="__abs_diff_h_geoportal", ascending=False
         ).drop(columns=["__abs_diff_h_geoportal"])
+        
     final_cols = [
         "id_odniesienia",
         "x_odniesienia",
@@ -1057,11 +1066,13 @@ def process_data(
         "odleglosc_pary",
     ]
     existing_cols = [col for col in final_cols if col in results_df.columns]
+    logging.debug("Zakończono główną funkcję przetwarzania danych.")
     return results_df[existing_cols]
 
 
 # === Główna funkcja programu ===
 def main():
+    setup_logging()
     clear_screen()
     display_welcome_screen()
     choice = get_user_choice()
@@ -1153,6 +1164,7 @@ def main():
             print(
                 f"{Fore.RED}Oba pliki muszą być w tej samej strefie. Popraw dane i spróbuj ponownie."
             )
+            logging.critical(f"Niezgodność stref EPSG: wejściowy={input_epsg}, zakres={zakres_epsg}. Przerwano program.")
             return  # Zakończ program
 
     results_df = process_data(
@@ -1245,8 +1257,10 @@ if __name__ == "__main__":
         main()
     except KeyboardInterrupt:
         print(f"\n{Fore.YELLOW}Przerwano działanie programu.{Style.RESET_ALL}")
+        logging.warning("Program przerwany przez użytkownika (KeyboardInterrupt).")
     except Exception as e:
         print(f"\n{Fore.RED}Wystąpił nieoczekiwany błąd globalny: {e}")
+        logging.critical(f"Wystąpił nieoczekiwany błąd globalny: {e}", exc_info=True)
         traceback.print_exc()
     finally:
         input(f"\n{Fore.YELLOW}Naciśnij Enter, aby zakończyć...{Style.RESET_ALL}")
