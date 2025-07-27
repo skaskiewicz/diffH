@@ -11,6 +11,10 @@
 ### Główne Funkcje
 
 *   **Transformacja Współrzędnych:** Automatyczne przeliczanie współrzędnych z układu **PL-2000** (strefy 5, 6, 7, 8 - EPSG: 2176, 2177, 2178, 2179) do układu **PL-1992** (EPSG: 2180).
+*   **Eksport rozrzedzonej siatki:** Możliwość wygenerowania reprezentatywnej, rozrzedzonej siatki punktów, które spełniają kryterium dokładności. Algorytm bazuje na heksagonalnym pokryciu zadanego obszaru.
+*   **Walidacja stref układu współrzędnych:** Program sprawdza, czy plik wejściowy i plik z zakresem są w tej samej strefie PL-2000, aby uniknąć błędów.
+*   **Obsługa plików Excel:** Dodano możliwość wczytywania plików wejściowych w formatach `.xls` i `.xlsx`.
+*   **Personalizowana autonumeracja:** Przy wczytywaniu plików 3-kolumnowych (bez ID), użytkownik może podać własny prefiks dla automatycznie generowanych numerów punktów.
 *   **Porównanie z Geoportal.gov.pl:** Pobieranie wysokości z serwisu Geoportal.gov.pl dla punktów z pliku wejściowego i dołączenie ich do wyników. Wysyłka punktów do API odbywa się w paczkach po maksymalnie 300 punktów.
 *   **Zaawansowane Porównanie Plików:** Porównywanie punktów z pliku wejściowego z punktami z drugiego pliku referencyjnego. Parowanie odbywa się na podstawie **dwóch warunków**:
     1.  **Progu odległości:** para jest tworzona tylko, jeśli odległość między punktami jest mniejsza niż zdefiniowana przez użytkownika.
@@ -24,10 +28,10 @@
     *   Kolumna `osiaga_dokladnosc` (Tak/Nie) informuje, czy różnica mieści się w zadanej tolerancji.
 *   **Inteligentna Analiza Danych:**
     *   **Automatyczne wykrywanie separatora** w plikach wejściowych (obsługuje średnik, przecinek, spację/tabulator).
-    *   **Automatyczne wykrywanie konwencji osi współrzędnych** (czy plik używa układu geodezyjnego `X=Północ, Y=Wschód`, czy standardu GIS `X=Wschód, Y=Północ`).
-*   **Zaokrąglanie współrzędnych:** Wszystkie współrzędne i wysokości są zaokrąglane do 2 miejsc po przecinku zgodnie z regułą Bradissa-Kryłowa (bankers' rounding).
+    *   **Automatyczne wykrywanie konwencji osi współrzędnych** (czy plik używa układu geodezyjnego `X=Północ, Y=Wschód`, czy standardu GIS `X=Wschód, Y=Północ`). Użytkownik może też ręcznie wskazać zamianę osi (Y,X).
+*   **Parametryzacja zaokrąglania:** Możliwość zdefiniowania przez użytkownika liczby miejsc po przecinku dla współrzędnych i wysokości w danych wejściowych i wynikowych.
 *   **Przyjazny Interfejs:** Skrypt prowadzi użytkownika krok po kroku przez proces wyboru opcji i podawania plików.
-*   **Czysty Plik Wynikowy:** Generuje przejrzysty, tabelaryczny plik `wynik.csv`, gotowy do importu w innych programach (np. Excel, QGIS). Wyniki są sortowane malejąco według wartości bezwzględnej różnicy wysokości względem geoportalu.
+*   **Czyste Pliki Wynikowe:** Generuje przejrzyste, tabelaryczne pliki `wynik.csv` (oraz `_dokladne.csv` i `_niedokladne.csv`), gotowe do importu w innych programach (np. Excel, QGIS). Wyniki są sortowane malejąco według wartości bezwzględnej różnicy wysokości względem geoportalu.
 *   **Eksport do GeoPackage (GPKG):** Możliwość zapisu wyników do pliku GeoPackage, który można otworzyć bezpośrednio w QGIS lub innych programach GIS. Ułatwia to dalszą analizę i wizualizację danych przestrzennych.
 
 ### Wymagania i Instalacja
@@ -49,6 +53,10 @@ Aby uruchomić skrypt, potrzebujesz:
     scipy
     colorama
     geopandas
+    numpy
+    matplotlib
+    openpyxl
+    tqdm
     ```
 
 3.  **Otwórz terminal** (wiersz poleceń) w tym folderze.
@@ -88,12 +96,14 @@ Po wykonaniu tych kroków środowisko jest gotowe do pracy.
 
 ### Format Pliku Wejściowego
 
-*   Plik musi być w formacie `.txt` lub `.csv`.
-*   Musi zawierać co najmniej 4 kolumny w kolejności: `numer_punktu`, `współrzędna_X`, `współrzędna_Y`, `wysokość_H`.
+*   Obsługiwane formaty: `.txt`, `.csv`, `.xls`, `.xlsx`.
+*   Struktura pliku:
+    *   4 kolumny: `numer_punktu`, `współrzędna_X`, `współrzędna_Y`, `wysokość_H`.
+    *   3 kolumny: `współrzędna_X`, `współrzędna_Y`, `wysokość_H`. W tym przypadku program poprosi o podanie prefiksu do automatycznej numeracji punktów.
 *   Skrypt automatycznie wykrywa, czy plik jest zapisany w konwencji:
     *   **Geodezyjnej:** `X` to współrzędna północna (Northing), `Y` to wschodnia (Easting).
     *   **GIS:** `X` to współrzędna wschodnia (Easting), `Y` to północna (Northing).
-
+*   Użytkownik może ręcznie wskazać zamianę osi (Y,X zamiast X,Y).
 **Przykład:**
 ```csv
 1001;5958143.50;7466893.08;137.90
@@ -102,13 +112,14 @@ Po wykonaniu tych kroków środowisko jest gotowe do pracy.
 
 ### Format Pliku Wyjściowego
 
-*   Nazwa pliku: `wynik.csv`
+*   Nazwy plików: `wynik.csv`, `wynik_dokladne.csv`, `wynik_niedokladne.csv`.
 *   Separator: średnik (`;`)
 *   Brakujące dane są oznaczane jako `brak_danych`.
 *   Dodatkowo generowane są pliki GeoPackage (GPKG) z wynikami przestrzennymi gotowymi do użycia w QGIS lub innym oprogramowaniu GIS:
     *   `wynik.gpkg` – zawiera wszystkie punkty.
     *   `wynik_dokladne.gpkg` – zawiera tylko punkty spełniające warunek dokładnościowy (kolumna `osiaga_dokladnosc` = Tak).
     *   `wynik_niedokladne.gpkg` – zawiera tylko punkty niespełniające warunku dokładnościowego (kolumna `osiaga_dokladnosc` ≠ Tak).
+    *   `wynik_siatka.gpkg` i `wynik_siatka.csv` – (opcjonalnie) zawierają reprezentatywną, rozrzedzoną siatkę punktów.
 *   Kolumna `eksport` w plikach GPKG przyjmuje wartość `True` tylko dla punktów spełniających warunek dokładnościowy, w pozostałych przypadkach `False`.
 *   Możliwe kolumny:
     *   `id_odniesienia`, `x_odniesienia`, `y_odniesienia`, `h_odniesienia`: Dane z pliku wejściowego.
@@ -137,12 +148,17 @@ Po wykonaniu tych kroków środowisko jest gotowe do pracy.
     * Wybierz odpowiednią opcję wpisując 1, 2 lub 3.
 3. **Podanie parametrów**
     * Jeśli wybrano tryb 1 lub 3, podaj maksymalną odległość wyszukiwania pary punktów (w metrach). Wpisz 0, aby pominąć ten warunek.
+    * Podaj liczbę miejsc po przecinku do zaokrąglenia danych wejściowych.
     * Podaj ścieżkę do pliku wejściowego (możesz przeciągnąć plik z Eksploratora Windows – program automatycznie usunie cudzysłowy lub apostrofy otaczające ścieżkę).
     * Odpowiedz, czy plik wejściowy ma zamienioną kolejność kolumn (Y,X zamiast X,Y).
     * Jeśli wybrano tryb 1 lub 3, podaj ścieżkę do pliku porównawczego i odpowiedz na pytanie o zamianę kolumn.
     * Jeśli wybrano tryb 2 lub 3, podaj dopuszczalną różnicę wysokości względem geoportalu (tolerancję).
+    * Jeśli wybrano tryb 2 lub 3, program zapyta, czy wygenerować **rozrzedzoną siatkę punktów**. Jeśli odpowiesz twierdząco:
+        * Podaj oczekiwaną odległość między punktami siatki (w metrach).
+        * Podaj ścieżkę do pliku z zakresem (wielobokiem), w którym ma być wygenerowana siatka.
+        * Odpowiedz, czy plik z zakresem ma zamienioną kolejność kolumn.
 4. **Wczytywanie i analiza danych**
-    * Program automatycznie wykryje separator i strukturę pliku wejściowego.
+    * Program automatycznie wykryje separator, strukturę pliku wejściowego oraz sprawdzi zgodność stref układu współrzędnych (jeśli podano plik z zakresem).
     * W razie potrzeby doda automatyczną numerację punktów.
     * Przekształci współrzędne do odpowiedniego układu.
 5. **Pobieranie danych z Geoportalu** (jeśli wybrano tryb 2 lub 3)
@@ -154,8 +170,11 @@ Po wykonaniu tych kroków środowisko jest gotowe do pracy.
     * Dla każdego punktu obliczana jest różnica wysokości względem geoportalu i/lub pliku porównawczego.
     * Jeśli podano tolerancję, program ustala, czy punkt spełnia warunek dokładnościowy (`osiaga_dokladnosc` = Tak/Nie).
     * Kolumna `eksport` w plikach GPKG przyjmuje wartość True tylko dla punktów spełniających warunek dokładnościowy.
-8. **Eksport wyników**
-    * Tworzony jest plik `wynik.csv` z kompletem wyników (wszystkie punkty, bez względu na warunek dokładnościowy).
+8. **Generowanie rozrzedzonej siatki** (jeśli zażądano)
+    * Program wybiera reprezentatywne punkty spełniające kryterium dokładności, które pokrywają zadany obszar w formie siatki heksagonalnej.
+    * Wyniki zapisywane są do plików `wynik_siatka.csv` i `wynik_siatka.gpkg`.
+9. **Eksport wyników**
+    * Tworzone są pliki `wynik.csv`, `wynik_dokladne.csv` i `wynik_niedokladne.csv`.
     * Tworzone są trzy pliki GeoPackage:
         * `wynik.gpkg` – wszystkie punkty.
         * `wynik_dokladne.gpkg` – tylko punkty spełniające warunek dokładnościowy.

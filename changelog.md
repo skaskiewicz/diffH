@@ -4,7 +4,40 @@ Wszystkie istotne zmiany w tym projekcie będą dokumentowane w tym pliku.
 
 Format bazuje na [Keep a Changelog](https://keepachangelog.com/en/1.0.0/), a projekt stosuje [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
----
+## [1.2.2] - 2025-07-03
+
+### Dodano
+
+*   **Eksport rozrzedzonej siatki (thinned grid):**
+    *   Możliwość wygenerowania i eksportu reprezentatywnej, rozrzedzonej siatki punktów, które spełniają kryterium dokładności.
+    *   Algorytm bazuje na heksagonalnym pokryciu zadanego obszaru i wybiera najlepszy punkt z każdej komórki.
+    *   Wymaga podania pliku z zakresem (wielobokiem) oraz oczekiwanej odległości między punktami siatki.
+    *   Wyniki zapisywane są do plików `wynik_siatka.csv` i `wynik_siatka.gpkg`.
+*   **Walidacja zgodności stref układu współrzędnych:** Program sprawdza, czy plik wejściowy i plik z zakresem są w tej samej strefie PL-2000. W przypadku niezgodności, program przerywa działanie, aby uniknąć błędów.
+*   **Obsługa plików Excel:** Dodano możliwość wczytywania plików wejściowych w formatach `.xls` i `.xlsx`.
+*   **Personalizowana autonumeracja:** Przy wczytywaniu plików 3-kolumnowych (bez ID), użytkownik może podać własny prefiks dla automatycznie generowanych numerów punktów.
+
+### Zmieniono
+
+*   Zaktualizowano interfejs użytkownika i komunikaty, aby uwzględnić nową funkcjonalność generowania siatki.
+*   Ulepszono logikę wczytywania danych, aby obsługiwać nowe formaty i opcje.
+
+## [1.2.1] - 2025-07-02
+
+### Dodano
+
+* Parametryzacja zaokrąglenia danych wejściowych – możliwość ustawienia liczby miejsc po przecinku dla współrzędnych i wysokości.
+* Logowanie do plików – zapisywanie logów z działania programu do osobnych plików.
+* Domyślne wartości dla komunikatów użytkownika w funkcjach wejściowych (odległość, tolerancja) oraz informowanie o ich użyciu.
+
+### Zmieniono
+
+* Poprawa logowania: lepsza czytelność, dodanie ponawiania wysyłki punktów w przypadku braku danych.
+* Pomijanie pierwszego wiersza, gdy druga kolumna nie jest liczbą.
+
+### Naprawiono
+
+* Ponawianie pobierania punktów, gdy występuje brak danych z geoportalu.
 
 ## [1.2.0] - 2025-07-01
 
