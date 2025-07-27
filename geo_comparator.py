@@ -28,7 +28,7 @@ DEFAULT_SPARSE_GRID_DISTANCE = 25.0  # domyślna odległość siatki rozrzedzone
 init(autoreset=True)
 
 
-# === NOWA FUNKCJA DO KONFIGURACJI LOGOWANIA ===
+# === FUNKCJA DO KONFIGURACJI LOGOWANIA ===
 def setup_logging():
     """Konfiguruje system logowania, jeśli DEBUG_MODE jest włączony."""
     if DEBUG_MODE:
@@ -717,7 +717,18 @@ def generuj_srodki_heksagonalne(
         wiersz += 1
     if not lista_srodkow:
         return np.array([])
+    
     lista_srodkow.sort(key=lambda p: (p[1], p[0]))
+
+    if DEBUG_MODE and lista_srodkow:
+        try:
+            srodki_df = pd.DataFrame(lista_srodkow, columns=['x', 'y'])
+            srodki_df.insert(0, 'id', [f"s_{i+1}" for i in range(len(srodki_df))])
+            srodki_df.to_csv("debug_siatka_srodki.csv", sep=';', index=False, float_format='%.2f')
+            logging.debug(f"Eksportowano {len(srodki_df)} środków siatki do pliku debug_siatka_srodki.csv")
+        except Exception as e:
+            logging.error(f"Nie udało się wyeksportować środków siatki do pliku CSV: {e}")
+
     return np.array(lista_srodkow)
 
 
@@ -961,6 +972,40 @@ def process_data(
         transformed_points = transform_coordinates_parallel(input_df)
         if transformed_points:
             geoportal_heights = get_geoportal_heights_concurrent(transformed_points)
+
+    if DEBUG_MODE and use_geoportal:
+        # 1. Eksport wyników transformacji
+        if transformed_points:
+            transform_results_for_debug = []
+            for i, point in enumerate(transformed_points):
+                original_id = input_df.iloc[i]['id']
+                if point:
+                    transform_results_for_debug.append({'id_punktu': original_id, 'x_2180': point[0], 'y_2180': point[1]})
+                else:
+                    transform_results_for_debug.append({'id_punktu': original_id, 'x_2180': 'Błąd', 'y_2180': 'Błąd'})
+            
+            if transform_results_for_debug:
+                debug_transform_df = pd.DataFrame(transform_results_for_debug)
+                debug_transform_df.to_csv("debug_transformacja_wyniki.csv", sep=';', index=False, float_format='%.2f')
+                logging.debug("Zapisano wyniki transformacji do pliku debug_transformacja_wyniki.csv")
+
+        # 2. Eksport punktów, dla których nie udało się pobrać wysokości
+        missing_height_points = []
+        for i, transformed_point in enumerate(transformed_points):
+            if transformed_point:
+                lookup_key = f"{transformed_point[1]:.2f} {transformed_point[0]:.2f}"
+                if lookup_key not in geoportal_heights:
+                    original_point = input_df.iloc[i]
+                    missing_height_points.append({
+                        'id_odniesienia': original_point['id'],
+                        'x_odniesienia': original_point['x'],
+                        'y_odniesienia': original_point['y']
+                    })
+        
+        if missing_height_points:
+            debug_missing_df = pd.DataFrame(missing_height_points)
+            debug_missing_df.to_csv("debug_geoportal_brak_wysokosci.csv", sep=';', index=False, float_format=f'%.{round_decimals}f')
+            logging.debug(f"Zapisano {len(missing_height_points)} punktów bez wysokości z Geoportalu do pliku debug_geoportal_brak_wysokosci.csv")
             
     tree_comparison = None
     if comparison_df is not None and not comparison_df.empty:
