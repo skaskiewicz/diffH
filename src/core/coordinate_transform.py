@@ -5,7 +5,7 @@ Moduł transformacji współrzędnych geodezyjnych
 import logging
 import multiprocessing
 import pandas as pd
-from typing import List, Optional, Tuple
+from typing import List, Optional, Tuple, Dict, Any # Upewnij się, że masz te importy
 from tqdm import tqdm
 from pyproj import Transformer
 from pyproj.exceptions import CRSError
@@ -14,15 +14,33 @@ from .data_loader import get_source_epsg
 # Import CUDA transform functions
 try:
     from .cuda_transform import (
-        check_cuda_availability, 
-        transform_coordinates_cuda, 
+        check_cuda_availability,
+        transform_coordinates_cuda,
         transform_coordinates_cuda_optimized,
         get_cuda_device_info
     )
     CUDA_MODULE_AVAILABLE = True
+    logging.info("Moduł transformacji CUDA załadowany pomyślnie.")
+
 except ImportError:
+    # Definiujemy puste funkcje z sygnaturami zgodnymi z oryginałami,
+    # aby Pylance był zadowolony.
+    
+    # Sygnatura musi być identyczna jak w prawdziwej funkcji
+    def check_cuda_availability() -> bool:
+        return False
+
+    def transform_coordinates_cuda(df: pd.DataFrame, batch_size: int = 10000) -> Optional[List[Optional[Tuple[float, float]]]]:
+        return None
+
+    def transform_coordinates_cuda_optimized(df: pd.DataFrame) -> Optional[List[Optional[Tuple[float, float]]]]:
+        return None
+        
+    def get_cuda_device_info() -> Optional[Dict[str, Any]]:
+        return None
+
     CUDA_MODULE_AVAILABLE = False
-    logging.info("Moduł CUDA nie jest dostępny")
+    logging.info("Moduł CUDA nie jest dostępny. Funkcje CUDA będą nieaktywne.")
 
 
 def worker_transform(

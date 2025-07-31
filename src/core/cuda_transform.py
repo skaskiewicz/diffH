@@ -16,6 +16,7 @@ try:
     CUDA_AVAILABLE = True
     logging.info("CuPy jest dostępne - sprawdzam CUDA")
 except ImportError:
+    cp = None
     CUDA_AVAILABLE = False
     logging.info("CuPy nie jest dostępne - używam przetwarzania CPU")
 
@@ -25,7 +26,7 @@ def check_cuda_availability() -> bool:
     Sprawdza dostępność CUDA i zwraca True jeśli można używać GPU.
     Obsługuje hybrydowe karty graficzne w laptopach i wielokartowe konfiguracje.
     """
-    if not CUDA_AVAILABLE:
+    if not CUDA_AVAILABLE or cp is None:
         return False
     
     try:
@@ -63,7 +64,7 @@ def check_cuda_availability() -> bool:
         
         if available_devices:
             # Wybierz najlepsze urządzenie (z największą pamięcią)
-            best_device = max(available_devices, key=lambda d: cp.cuda.Device(d).mem_info[1])
+            best_device = max(available_devices, key=lambda d: cp.cuda.Device(d).mem_info[1]) # type: ignore
             cp.cuda.Device(best_device).use()
             
             device_name = cp.cuda.runtime.getDeviceProperties(best_device)['name'].decode('utf-8')
@@ -83,7 +84,7 @@ def get_cuda_device_info() -> Optional[dict]:
     """
     Zwraca informacje o dostępnych urządzeniach CUDA
     """
-    if not CUDA_AVAILABLE:
+    if not CUDA_AVAILABLE or cp is None:
         return None
     
     try:
@@ -156,7 +157,7 @@ def create_transformers_for_zones(unique_epsg_zones: List[int]) -> dict:
 def transform_coordinates_cuda(
     df: pd.DataFrame,
     batch_size: int = 10000
-) -> List[Optional[Tuple[float, float]]]:
+) -> Optional[List[Optional[Tuple[float, float]]]]:
     """
     Funkcja do transformacji współrzędnych geodezyjnych z wykorzystaniem CUDA.
     Automatycznie dzieli dane na partie dla optymalnego wykorzystania GPU.
@@ -193,8 +194,8 @@ def transform_coordinates_cuda(
         batch_df = df.iloc[start_idx:end_idx]
         
         # Przygotowanie danych dla partii
-        northings = batch_df["geodetic_northing"].values
-        eastings = batch_df["geodetic_easting"].values
+        northings = batch_df["geodetic_northing"].to_numpy()
+        eastings = batch_df["geodetic_easting"].to_numpy()
         
         # Określenie stref EPSG dla partii
         epsg_zones = get_epsg_zones_for_batch(eastings)
@@ -233,7 +234,7 @@ def transform_coordinates_cuda(
 
 def transform_coordinates_cuda_optimized(
     df: pd.DataFrame
-) -> List[Optional[Tuple[float, float]]]:
+) -> Optional[List[Optional[Tuple[float, float]]]]:
     """
     Zoptymalizowana wersja transformacji CUDA z lepszym wykorzystaniem pamięci GPU
     """
@@ -254,8 +255,8 @@ def transform_coordinates_cuda_optimized(
     logging.debug("Rozpoczęto zoptymalizowaną transformację współrzędnych z wykorzystaniem CUDA.")
     
     # Przygotowanie danych
-    northings = df["geodetic_northing"].values
-    eastings = df["geodetic_easting"].values
+    northings = df["geodetic_northing"].to_numpy()
+    eastings = df["geodetic_easting"].to_numpy()
     
     # Określenie stref EPSG
     epsg_zones = get_epsg_zones_for_batch(eastings)
@@ -273,12 +274,12 @@ def transform_coordinates_cuda_optimized(
             zone_groups[epsg_zone].append(i)
     
     # Transformacja dla każdej strefy
-    results = [None] * len(df)
+    results: List[Optional[Tuple[float, float]]] = [None] * len(df)
     
     for epsg_zone, indices in tqdm(zone_groups.items(), desc="Transformacja stref CUDA"):
         transformer = transformers[epsg_zone]
-        zone_northings = northings[indices]
-        zone_eastings = eastings[indices]
+        zone_northings = northings[indices]  # type: ignore
+        zone_eastings = eastings[indices]  # type: ignore
         
         # Przetwarzanie partiami dla lepszego wykorzystania GPU
         batch_size = 5000

@@ -5,16 +5,22 @@ Test script do sprawdzenia wykrywania CUDA i metod transformacji
 
 import sys
 import os
+from colorama import Fore, Style
+import warnings
 
 # Dodaj katalog src do ścieżki Pythona
 project_root = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, project_root)
 
-from src.core.coordinate_transform import get_transformation_method_info
-from colorama import Fore, Style
+
+
+# Ignoruj ostrzeżenie z CuPy o braku CUDA_PATH, jeśli i tak działa
+warnings.filterwarnings("ignore", category=UserWarning, message="CUDA path could not be detected.*")
 
 def test_cuda_detection():
     """Test wykrywania CUDA"""
+    from src.core.coordinate_transform import get_transformation_method_info
+
     print(f"{Fore.CYAN}=== Test wykrywania CUDA ==={Style.RESET_ALL}")
     
     # Sprawdź metodę transformacji
