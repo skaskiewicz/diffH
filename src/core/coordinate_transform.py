@@ -11,6 +11,19 @@ from pyproj import Transformer
 from pyproj.exceptions import CRSError
 from .data_loader import get_source_epsg
 
+# Import CUDA transform functions
+try:
+    from .cuda_transform import (
+        check_cuda_availability, 
+        transform_coordinates_cuda, 
+        transform_coordinates_cuda_optimized,
+        get_cuda_device_info
+    )
+    CUDA_MODULE_AVAILABLE = True
+except ImportError:
+    CUDA_MODULE_AVAILABLE = False
+    logging.info("Moduł CUDA nie jest dostępny")
+
 
 def worker_transform(
     point_data_with_index: Tuple[int, float, float],
@@ -39,12 +52,40 @@ def transform_coordinates_parallel(
 ) -> List[Optional[Tuple[float, float]]]:
     """
     Funkcja do równoległej transformacji współrzędnych geodezyjnych z układu PL-2000 do układu PL-1992 (EPSG:2180).
+    Automatycznie wykrywa dostępność CUDA i używa przyspieszenia GPU jeśli jest dostępne.
+    
     Args:
         df (pd.DataFrame): DataFrame z kolumnami 'geodetic_northing' i 'geodetic_easting'.
     Returns:
         List[Optional[Tuple[float, float]]]: Lista przekształconych współrzędnych w formacie [(x, y), ...] lub None dla błędów.
     """
     from colorama import Fore, Style
+    
+    # Sprawdź dostępność CUDA
+    if CUDA_MODULE_AVAILABLE and check_cuda_availability():
+        print(f"{Fore.GREEN}Wykryto kartę NVIDIA - używam przyspieszenia CUDA{Style.RESET_ALL}")
+        logging.info("Używam transformacji CUDA")
+        
+        # Próbuj zoptymalizowaną wersję CUDA
+        try:
+            result = transform_coordinates_cuda_optimized(df)
+            if result is not None:
+                return result
+        except Exception as e:
+            logging.warning(f"Błąd w zoptymalizowanej transformacji CUDA: {e}")
+        
+        # Fallback do standardowej transformacji CUDA
+        try:
+            result = transform_coordinates_cuda(df)
+            if result is not None:
+                return result
+        except Exception as e:
+            logging.warning(f"Błąd w transformacji CUDA: {e}")
+    
+    # Fallback do przetwarzania CPU
+    print(f"{Fore.YELLOW}Używam przetwarzania CPU (CUDA niedostępne){Style.RESET_ALL}")
+    logging.info("Używam transformacji CPU")
+    
     print(f"\n{Fore.CYAN}Transformuję współrzędne ...{Style.RESET_ALL}")
     logging.debug("Rozpoczęto równoległą transformację współrzędnych.")
 
@@ -65,4 +106,18 @@ def transform_coordinates_parallel(
             )
         )
     logging.debug(f"Zakończono transformację. Przetworzono {len(results)} punktów.")
-    return results 
+    return results
+
+
+def get_transformation_method_info() -> str:
+    """
+    Zwraca informację o dostępnej metodzie transformacji
+    """
+    if CUDA_MODULE_AVAILABLE and check_cuda_availability():
+        device_info = get_cuda_device_info()
+        if device_info and device_info['current_device'] is not None:
+            device_name = device_info['devices'][device_info['current_device']]['name']
+            return f"CUDA (GPU: {device_name})"
+        return "CUDA (GPU acceleration)"
+    else:
+        return "CPU (multiprocessing)" 

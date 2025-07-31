@@ -11,6 +11,7 @@
 ### Główne Funkcje
 
 *   **Transformacja Współrzędnych:** Automatyczne przeliczanie współrzędnych z układu **PL-2000** (strefy 5, 6, 7, 8 - EPSG: 2176, 2177, 2178, 2179) do układu **PL-1992** (EPSG: 2180).
+*   **Przyspieszenie GPU (CUDA):** Automatyczne wykrywanie kart NVIDIA i wykorzystanie przyspieszenia CUDA do transformacji współrzędnych. Program automatycznie przełącza się między przetwarzaniem GPU a CPU w zależności od dostępności sprzętu.
 *   **Eksport rozrzedzonej siatki:** Możliwość wygenerowania reprezentatywnej, rozrzedzonej siatki punktów, które spełniają kryterium dokładności. Algorytm bazuje na heksagonalnym pokryciu zadanego obszaru.
 *   **Walidacja stref układu współrzędnych:** Program sprawdza, czy plik wejściowy i plik z zakresem są w tej samej strefie PL-2000, aby uniknąć błędów.
 *   **Obsługa plików Excel:** Dodano możliwość wczytywania plików wejściowych w formatach `.xls` i `.xlsx`.
@@ -40,6 +41,7 @@ Aby uruchomić skrypt, potrzebujesz:
 
 1.  **Python 3** (rekomendowana wersja 3.8 lub nowsza).
 2.  Kilka bibliotek, które należy zainstalować.
+3.  **Opcjonalnie:** Karta graficzna NVIDIA z obsługą CUDA dla przyspieszenia GPU (automatycznie wykrywane).
 
 **Kroki instalacji:**
 
@@ -47,16 +49,19 @@ Aby uruchomić skrypt, potrzebujesz:
 
 2.  **Utwórz plik `requirements.txt`** w tym samym folderze i wklej do niego poniższą zawartość:
     ```
-    pandas
-    pyproj
-    requests
-    scipy
-    colorama
-    geopandas
-    numpy
-    matplotlib
-    openpyxl
-    tqdm
+    colorama>=0.4.6
+    geopandas>=0.13.0
+    pandas>=2.0.0
+    pyproj>=3.5.0
+    requests>=2.31.0
+    scipy>=1.11.0
+    openpyxl>=3.0.0
+    tqdm>=4.60.0
+    numpy>=1.24.0
+    matplotlib>=3.7.0
+    # CUDA dependencies for GPU acceleration (opcjonalne)
+    cupy-cuda12x>=12.0.0; sys_platform != "win32"
+    cupy-cuda11x>=11.0.0; sys_platform == "win32"
     ```
 
 3.  **Otwórz terminal** (wiersz poleceń) w tym folderze.
@@ -77,6 +82,8 @@ Aby uruchomić skrypt, potrzebujesz:
     ```bash
     pip install -r requirements.txt
     ```
+
+6.  **Opcjonalnie - dla przyspieszenia GPU:** Jeśli masz kartę NVIDIA, biblioteki CUDA zostaną automatycznie zainstalowane. Program automatycznie wykryje dostępność CUDA i użyje przyspieszenia GPU.
 
 Po wykonaniu tych kroków środowisko jest gotowe do pracy.
 

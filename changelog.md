@@ -4,6 +4,25 @@ Wszystkie istotne zmiany w tym projekcie będą dokumentowane w tym pliku.
 
 Format bazuje na [Keep a Changelog](https://keepachangelog.com/en/1.0.0/), a projekt stosuje [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.3.0] - 2025-01-XX
+
+### Dodano
+
+*   **Przyspieszenie GPU (CUDA):** Automatyczne wykrywanie kart NVIDIA i wykorzystanie przyspieszenia CUDA do transformacji współrzędnych.
+    *   Program automatycznie przełącza się między przetwarzaniem GPU a CPU w zależności od dostępności sprzętu.
+    *   Brak ingerencji użytkownika - wybór metody odbywa się automatycznie.
+    *   Zoptymalizowane przetwarzanie partiami dla lepszego wykorzystania pamięci GPU.
+    *   Fallback do przetwarzania CPU w przypadku braku CUDA lub błędów GPU.
+    *   Dodano zależności CuPy dla obsługi CUDA (opcjonalne instalowanie).
+*   **Test wykrywania CUDA:** Dodano skrypt `test_cuda_detection.py` do sprawdzenia dostępności CUDA.
+
+### Zmieniono
+
+*   Zaktualizowano `requirements.txt` z zależnościami CUDA (CuPy).
+*   Zmodyfikowano moduł `coordinate_transform.py` do automatycznego wykrywania i używania CUDA.
+*   Dodano informację o metodzie transformacji w interfejsie użytkownika.
+*   Zaktualizowano dokumentację README.md z informacjami o przyspieszeniu GPU.
+
 ## [1.2.2] - 2025-07-03
 
 ### Dodano

@@ -19,7 +19,7 @@ from ..utils.ui_helpers import (
 )
 from ..config.settings import DEBUG_MODE, DEFAULT_SPARSE_GRID_DISTANCE
 from .data_loader import load_data, load_scope_data, assign_geodetic_roles, get_source_epsg
-from .coordinate_transform import transform_coordinates_parallel
+from .coordinate_transform import transform_coordinates_parallel, get_transformation_method_info
 from .geoportal_client import get_geoportal_heights_concurrent
 from .grid_generator import znajdz_punkty_dla_siatki
 from .export import export_to_csv, export_to_geopackage
@@ -43,6 +43,10 @@ def process_data(
     
     geoportal_heights, transformed_points = {}, []
     if use_geoportal:
+        # Wyświetl informację o metodzie transformacji
+        transformation_method = get_transformation_method_info()
+        print(f"{Fore.CYAN}Metoda transformacji: {transformation_method}{Style.RESET_ALL}")
+        
         transformed_points = transform_coordinates_parallel(input_df)
         if transformed_points:
             geoportal_heights = get_geoportal_heights_concurrent(transformed_points)
