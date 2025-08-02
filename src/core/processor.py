@@ -15,8 +15,9 @@ from ..utils.logging_config import setup_logging
 from ..utils.ui_helpers import (
     clear_screen, display_welcome_screen, get_user_choice,
     get_file_path, get_max_distance, ask_swap_xy,
-    get_geoportal_tolerance, get_round_decimals
+    get_geoportal_tolerance, get_round_decimals, ask_load_config
 )
+from ..utils.config_manager import load_config, save_config_for_mode
 from ..config.settings import DEBUG_MODE, DEFAULT_SPARSE_GRID_DISTANCE
 from .data_loader import load_data, load_scope_data, assign_geodetic_roles, get_source_epsg
 from .coordinate_transform import transform_coordinates_parallel, get_transformation_method_info
@@ -193,183 +194,152 @@ def process_data(
     return results_df[existing_cols]
 
 
-def main():
+def main(config_path: str):
     """Główna funkcja programu"""
     setup_logging()
     clear_screen()
     display_welcome_screen()
+
     choice = get_user_choice()
-    max_distance = get_max_distance() if choice in [1, 3] else 0.0
-    round_decimals = get_round_decimals()
+
+    all_configs = load_config(config_path)
+    mode_settings = all_configs.get(str(choice))
+    use_saved_settings = False
+    
+    if mode_settings:
+        if ask_load_config(mode_settings):
+            use_saved_settings = True
+
+    settings_to_save = {}
+
+    # --- Pytania o ustawienia (zgodnie z oryginalną kolejnością) ---
+
+    max_distance = 0.0
+    if choice in [1, 3]:
+        # Poprawka dla Pylance: Sprawdzamy, czy mode_settings nie jest None
+        if use_saved_settings and mode_settings is not None and 'max_distance' in mode_settings:
+            max_distance = mode_settings['max_distance']
+        else:
+            max_distance = get_max_distance()
+            settings_to_save['max_distance'] = max_distance
+
+    if use_saved_settings and mode_settings is not None and 'round_decimals' in mode_settings:
+        round_decimals = mode_settings['round_decimals']
+    else:
+        round_decimals = get_round_decimals()
+        settings_to_save['round_decimals'] = round_decimals
+
     input_file = get_file_path(
         f"\n{Fore.YELLOW}Podaj ścieżkę do pliku wejściowego: {Style.RESET_ALL}"
     )
-    swap_input = ask_swap_xy("wejściowego")
-    comparison_file = None
-    swap_comparison = False
+
+    if use_saved_settings and mode_settings is not None and 'swap_input' in mode_settings:
+        swap_input = mode_settings['swap_input']
+    else:
+        swap_input = ask_swap_xy("wejściowego")
+        settings_to_save['swap_input'] = swap_input
+        
+    comparison_file, swap_comparison = None, False
     if choice in [1, 3]:
         comparison_file = get_file_path(
             f"{Fore.YELLOW}Podaj ścieżkę do pliku porównawczego: {Style.RESET_ALL}"
         )
-        swap_comparison = ask_swap_xy("porównawczego")
-    geoportal_tolerance = get_geoportal_tolerance() if choice in [2, 3] else None
-
-    # --- Parametry eksportu rozrzedzonej siatki ---
-    sparse_grid_requested = False
-    sparse_grid_distance = DEFAULT_SPARSE_GRID_DISTANCE
-    zakres_df = None
+        if use_saved_settings and mode_settings is not None and 'swap_comparison' in mode_settings:
+            swap_comparison = mode_settings['swap_comparison']
+        else:
+            swap_comparison = ask_swap_xy("porównawczego")
+            settings_to_save['swap_comparison'] = swap_comparison
+            
+    geoportal_tolerance = None
     if choice in [2, 3]:
-        resp = (
-            input(
-                f"\n{Fore.YELLOW}Czy wykonać eksport rozrzedzonej siatki dla punktów spełniających dokładność? [t/n] (domyślnie: n): "
-            )
-            .strip()
-            .lower()
-        )
-        if resp in ["t", "tak", "y", "yes"]:
-            sparse_grid_requested = True
-            dist_prompt = f"{Fore.YELLOW}Podaj oczekiwaną odległość pomiędzy punktami siatki (w metrach, domyślnie: {DEFAULT_SPARSE_GRID_DISTANCE}): {Style.RESET_ALL}"
-            dist_val = input(dist_prompt).strip()
-            if dist_val:
-                try:
-                    parsed_dist = float(dist_val.replace(",", "."))
-                    if parsed_dist > 0:
-                        sparse_grid_distance = parsed_dist
-                    else:
-                        print(
-                            f"{Fore.RED}Błąd: Odległość musi być większa od zera. Przyjęto domyślną wartość {DEFAULT_SPARSE_GRID_DISTANCE} m."
-                        )
-                except ValueError:
-                    print(
-                        f"{Fore.RED}Błąd: Wprowadzono niepoprawną liczbę. Przyjęto domyślną wartość {DEFAULT_SPARSE_GRID_DISTANCE} m."
-                    )
-            print(
-                f"{Fore.CYAN}Wybrano eksport rozrzedzonej siatki z parametrem odległości: {sparse_grid_distance} m{Style.RESET_ALL}"
-            )
-            zakres_file = get_file_path(
-                f"{Fore.YELLOW}Podaj ścieżkę do pliku z zakresem opracowania (wierzchołki wieloboku): {Style.RESET_ALL}"
-            )
-            swap_scope = ask_swap_xy("z zakresem")
+        if use_saved_settings and mode_settings is not None and 'geoportal_tolerance' in mode_settings:
+            geoportal_tolerance = mode_settings['geoportal_tolerance']
+        else:
+            geoportal_tolerance = get_geoportal_tolerance()
+            settings_to_save['geoportal_tolerance'] = geoportal_tolerance
+
+    sparse_grid_requested, sparse_grid_distance, zakres_df, swap_scope = False, DEFAULT_SPARSE_GRID_DISTANCE, None, False
+    if choice in [2, 3]:
+        if use_saved_settings and mode_settings is not None and 'sparse_grid_requested' in mode_settings:
+            sparse_grid_requested = mode_settings['sparse_grid_requested']
+        else:
+            resp = input(f"\n{Fore.YELLOW}Czy wykonać eksport rozrzedzonej siatki dla punktów spełniających dokładność? [t/n] (domyślnie: n): ").strip().lower()
+            sparse_grid_requested = resp in ["t", "tak", "y", "yes"]
+            settings_to_save['sparse_grid_requested'] = sparse_grid_requested
+
+        if sparse_grid_requested:
+            if use_saved_settings and mode_settings is not None and 'sparse_grid_distance' in mode_settings:
+                sparse_grid_distance = mode_settings['sparse_grid_distance']
+            else:
+                dist_prompt = f"{Fore.YELLOW}Podaj oczekiwaną odległość pomiędzy punktami siatki (w metrach, domyślnie: {DEFAULT_SPARSE_GRID_DISTANCE}): {Style.RESET_ALL}"
+                dist_val = input(dist_prompt).strip()
+                if dist_val:
+                    try:
+                        parsed_dist = float(dist_val.replace(",", "."))
+                        if parsed_dist > 0:
+                            sparse_grid_distance = parsed_dist
+                    except ValueError:
+                        # Poprawka dla Ruff: pusta instrukcja pass jest czytelniejsza
+                        pass
+                settings_to_save['sparse_grid_distance'] = sparse_grid_distance
+
+            zakres_file = get_file_path(f"{Fore.YELLOW}Podaj ścieżkę do pliku z zakresem opracowania (wierzchołki wieloboku): {Style.RESET_ALL}")
+            
+            if use_saved_settings and mode_settings is not None and 'swap_scope' in mode_settings:
+                swap_scope = mode_settings['swap_scope']
+            else:
+                swap_scope = ask_swap_xy("z zakresem")
+                settings_to_save['swap_scope'] = swap_scope
+            
             zakres_df = load_scope_data(zakres_file, swap_scope)
 
+    # Zapisz nowe ustawienia, jeśli były wprowadzane ręcznie
+    if settings_to_save:
+        save_config_for_mode(choice, settings_to_save, config_path)
+
+    # --- Wczytywanie i przetwarzanie danych ---
     print(f"\n{Fore.CYAN}--- Wczytywanie danych ---{Style.RESET_ALL}")
     input_df = load_data(input_file, swap_input)
     if input_df is None or input_df.empty:
-        print(
-            f"{Fore.RED}Nie udało się wczytać danych wejściowych. Zamykanie programu."
-        )
+        print(f"{Fore.RED}Nie udało się wczytać danych wejściowych. Zamykanie programu.")
         return
-    # Zaokrąglanie danych wejściowych
+        
     for col in ["x", "y", "h"]:
         input_df[col] = input_df[col].round(round_decimals)
-    comparison_df = (
-        load_data(comparison_file, swap_comparison) if comparison_file else None
-    )
-    if comparison_df is not None:
-        if "h" in comparison_df.columns:
-            comparison_df["h"] = comparison_df["h"].round(round_decimals)
+        
+    comparison_df = load_data(comparison_file, swap_comparison) if comparison_file else None
+    if comparison_df is not None and "h" in comparison_df.columns:
+        comparison_df["h"] = comparison_df["h"].round(round_decimals)
 
-    # Sprawdzenie zgodności stref PL-2000 dla siatki
     if sparse_grid_requested and zakres_df is not None:
-        input_df_with_roles = assign_geodetic_roles(input_df.copy())
-        zakres_df_with_roles = assign_geodetic_roles(zakres_df.copy())
-
-        input_epsg = get_source_epsg(input_df_with_roles.iloc[0]["geodetic_easting"])
-        zakres_epsg = get_source_epsg(zakres_df_with_roles.iloc[0]["geodetic_easting"])
-
+        input_epsg = get_source_epsg(assign_geodetic_roles(input_df.copy()).iloc[0]["geodetic_easting"])
+        zakres_epsg = get_source_epsg(assign_geodetic_roles(zakres_df.copy()).iloc[0]["geodetic_easting"])
         if input_epsg and zakres_epsg and input_epsg != zakres_epsg:
-            print(
-                f"\n{Fore.RED}BŁĄD KRYTYCZNY: Niezgodność stref układu współrzędnych!"
-            )
-            print(
-                f"{Fore.RED}Plik wejściowy jest w strefie EPSG: {input_epsg}, a plik z zakresem w strefie EPSG: {zakres_epsg}."
-            )
-            print(
-                f"{Fore.RED}Oba pliki muszą być w tej samej strefie. Popraw dane i spróbuj ponownie."
-            )
-            logging.critical(f"Niezgodność stref EPSG: wejściowy={input_epsg}, zakres={zakres_epsg}. Przerwano program.")
-            return  # Zakończ program
+            print(f"\n{Fore.RED}BŁĄD KRYTYCZNY: Niezgodność stref układu współrzędnych!")
+            print(f"{Fore.RED}Plik wejściowy jest w strefie EPSG: {input_epsg}, a plik z zakresem w strefie EPSG: {zakres_epsg}.")
+            return
 
-    results_df = process_data(
-        input_df,
-        comparison_df,
-        choice in [2, 3],
-        max_distance,
-        geoportal_tolerance,
-        round_decimals,
-    )
+    results_df = process_data(input_df, comparison_df, choice in [2, 3], max_distance, geoportal_tolerance, round_decimals)
 
-    # --- Eksport rozrzedzonej siatki po przetworzeniu danych ---
-    if sparse_grid_requested:
-        if (
-            zakres_df is not None
-            and not zakres_df.empty
-            and "osiaga_dokladnosc" in results_df.columns
-        ):
-            print(
-                f"{Fore.CYAN}\n--- Przetwarzanie rozrzedzonej siatki ---{Style.RESET_ALL}"
-            )
-            punkty_dokladne_df = results_df[
-                results_df["osiaga_dokladnosc"] == "Tak"
-            ].copy()
-            if punkty_dokladne_df.empty:
-                print(
-                    f"{Fore.YELLOW}Brak punktów spełniających kryterium dokładności. Nie można wygenerować siatki."
-                )
+    if sparse_grid_requested and zakres_df is not None and "osiaga_dokladnosc" in results_df.columns:
+        print(f"{Fore.CYAN}\n--- Przetwarzanie rozrzedzonej siatki ---{Style.RESET_ALL}")
+        punkty_dokladne_df = results_df[results_df["osiaga_dokladnosc"] == "Tak"].copy()
+        if not punkty_dokladne_df.empty:
+            wyniki_siatki_df = znajdz_punkty_dla_siatki(punkty_dokladne_df, zakres_df[["x", "y"]].values, sparse_grid_distance)
+            if not wyniki_siatki_df.empty:
+                output_siatka_csv, output_siatka_gpkg = "wynik_siatka.csv", "wynik_siatka.gpkg"
+                wyniki_siatki_df.to_csv(output_siatka_csv, sep=";", index=False, float_format=f"%.{round_decimals}f", na_rep="brak_danych")
+                print(f"{Fore.GREEN}Wyniki rozrzedzonej siatki zapisano w pliku CSV: {os.path.abspath(output_siatka_csv)}{Style.RESET_ALL}")
+                export_to_geopackage(wyniki_siatki_df, input_df, output_siatka_gpkg, "wynik_siatki", round_decimals, False)
             else:
-                obszar_wielokat = zakres_df[["x", "y"]].values
-                wyniki_siatki_df = znajdz_punkty_dla_siatki(
-                    punkty_dokladne_df, obszar_wielokat, sparse_grid_distance
-                )
-                if not wyniki_siatki_df.empty:
-                    output_siatka_csv = "wynik_siatka.csv"
-                    output_siatka_gpkg = "wynik_siatka.gpkg"
-                    wyniki_siatki_df.to_csv(
-                        output_siatka_csv,
-                        sep=";",
-                        index=False,
-                        float_format=f"%.{round_decimals}f",
-                        na_rep="brak_danych",
-                    )
-                    print(
-                        f"{Fore.GREEN}Wyniki rozrzedzonej siatki zapisano w pliku CSV: {os.path.abspath(output_siatka_csv)}{Style.RESET_ALL}"
-                    )
-                    export_to_geopackage(
-                        wyniki_siatki_df,
-                        input_df,
-                        output_siatka_gpkg,
-                        layer_name="wynik_siatki",
-                        round_decimals=round_decimals,
-                        split_by_accuracy=False
-                    )
-                else:
-                    print(
-                        f"{Fore.YELLOW}Nie udało się wygenerować żadnych punktów dla rozrzedzonej siatki."
-                    )
+                print(f"{Fore.YELLOW}Nie udało się wygenerować żadnych punktów dla rozrzedzonej siatki.")
         else:
-            if zakres_df is None or zakres_df.empty:
-                print(
-                    f"{Fore.RED}Nie udało się wczytać danych zakresu. Przetwarzanie siatki przerwane."
-                )
-            if "osiaga_dokladnosc" not in results_df.columns:
-                print(
-                    f"{Fore.RED}Brak kolumny 'osiaga_dokladnosc' w wynikach. Przetwarzanie siatki przerwane."
-                )
+            print(f"{Fore.YELLOW}Brak punktów spełniających kryterium dokładności. Nie można wygenerować siatki.")
 
-    # --- Standardowy eksport wyników ---
     if not results_df.empty:
         print(f"\n{Fore.CYAN}--- Zapisywanie wyników ---{Style.RESET_ALL}")
-
-        # Eksport do plików CSV
-        output_csv_file = "wynik.csv"
-        export_to_csv(results_df, output_csv_file, round_decimals=round_decimals)
-
-        # Eksport do plików GeoPackage
-        output_gpkg_file = "wynik.gpkg"
-        export_to_geopackage(
-            results_df, input_df, output_gpkg_file, round_decimals=round_decimals
-        )
-
+        export_to_csv(results_df, "wynik.csv", round_decimals=round_decimals)
+        export_to_geopackage(results_df, input_df, "wynik.gpkg", round_decimals=round_decimals)
         print(f"\n{Fore.GREEN}Zakończono przetwarzanie pomyślnie!")
     else:
         print(f"{Fore.YELLOW}Nie wygenerowano żadnych wyników.")
@@ -377,7 +347,8 @@ def main():
 
 if __name__ == "__main__":
     try:
-        main()
+        # Ten kod jest tu na wypadek, gdyby plik był uruchamiany bezpośrednio, ale główna logika jest w main.py
+        main(config_path="config.json")
     except KeyboardInterrupt:
         print(f"\n{Fore.YELLOW}Przerwano działanie programu.{Style.RESET_ALL}")
         logging.warning("Program przerwany przez użytkownika (KeyboardInterrupt).")
@@ -386,4 +357,4 @@ if __name__ == "__main__":
         logging.critical(f"Wystąpił nieoczekiwany błąd globalny: {e}", exc_info=True)
         traceback.print_exc()
     finally:
-        input(f"\n{Fore.YELLOW}Naciśnij Enter, aby zakończyć...{Style.RESET_ALL}") 
+        input(f"\n{Fore.YELLOW}Naciśnij Enter, aby zakończyć...{Style.RESET_ALL}")
