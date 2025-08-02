@@ -8,6 +8,7 @@ import pandas as pd
 from scipy.spatial import KDTree
 from tqdm import tqdm
 from matplotlib.path import Path
+from colorama import Fore, Style
 from ..config.settings import DEBUG_MODE
 
 
@@ -96,16 +97,37 @@ def znajdz_punkty_dla_siatki(
     :param odleglosc_siatki: Oczekiwana odległość między punktami siatki (promień okręgu to połowa tej wartości).
     :return: DataFrame z wynikami dla siatki.
     """
-    from colorama import Fore
+    # === POCZĄTEK ZMIAN ===
+    # Krok 1: Wstępne filtrowanie punktów-kandydatów, aby zawierały tylko te wewnątrz zadanego zakresu
+    logging.debug("Filtrowanie punktów-kandydatów względem zadanego zakresu...")
+    sciezka_obszaru = Path(obszar_wielokat)
+    wspolrzedne_kandydatow = punkty_kandydaci[['x_odniesienia', 'y_odniesienia']].values
+    maska_wewnatrz_obszaru = sciezka_obszaru.contains_points(wspolrzedne_kandydatow)
+    
+    # Używamy .copy(), aby uniknąć ostrzeżenia SettingWithCopyWarning
+    punkty_w_obszarze = punkty_kandydaci[maska_wewnatrz_obszaru].copy()
+    
+    if punkty_w_obszarze.empty:
+        print(f"\n{Fore.YELLOW}Brak punktów spełniających kryterium dokładności wewnątrz podanego zakresu.{Style.RESET_ALL}")
+        logging.warning("Brak punktów-kandydatów wewnątrz zadanego wieloboku. Przerwano generowanie siatki.")
+        return pd.DataFrame()
+        
+    print(f"\n{Fore.CYAN}Znaleziono {len(punkty_w_obszarze)} punktów spełniających dokładność wewnątrz zadanego zakresu.{Style.RESET_ALL}")
+    logging.info(f"Po filtracji pozostało {len(punkty_w_obszarze)} punktów-kandydatów wewnątrz zakresu.")
+    
     promien_szukania = odleglosc_siatki / 2.0
     logging.debug(f"Rozpoczęto znajdowanie punktów dla siatki. Odległość siatki: {odleglosc_siatki}m, promień szukania: {promien_szukania}m.")
+
+    # Używamy przefiltrowanych punktów 'punkty_w_obszarze' zamiast 'punkty_kandydaci'
     dane_punktow = (
-        punkty_kandydaci[
+        punkty_w_obszarze[
             ["x_odniesienia", "y_odniesienia", "h_odniesienia", "geoportal_h"]
         ]
         .apply(pd.to_numeric, errors="coerce")
         .dropna()
     )
+    # === KONIEC ZMIAN ===
+
     punkty_np = dane_punktow.values
     drzewo_kd = KDTree(punkty_np[:, :2])
     print("\nGenerowanie siatki pokrycia heksagonalnego...")
@@ -144,7 +166,10 @@ def znajdz_punkty_dla_siatki(
         
         odwiedzone_indeksy_w_np.add(najlepszy_idx_w_np)
         oryginalny_indeks_df = dane_punktow.index[najlepszy_idx_w_np]
-        znaleziony_punkt_dane = punkty_kandydaci.loc[oryginalny_indeks_df]
+        # === POCZĄTEK ZMIAN ===
+        # Upewniamy się, że odwołujemy się do przefiltrowanej ramki danych
+        znaleziony_punkt_dane = punkty_w_obszarze.loc[oryginalny_indeks_df]
+        # === KONIEC ZMIAN ===
         
         logging.debug(f"  Wybrano najlepszego kandydata: ID={znaleziony_punkt_dane['id_odniesienia']}, odległość od środka: {np.linalg.norm(punkty_np[najlepszy_idx_w_np, :2] - srodek):.2f}m, diff_h_geoportal: {abs(punkty_np[najlepszy_idx_w_np, 2] - punkty_np[najlepszy_idx_w_np, 3]):.3f}m")
         
@@ -155,4 +180,4 @@ def znajdz_punkty_dla_siatki(
         return pd.DataFrame()
         
     logging.debug(f"Zakończono przetwarzanie siatki. Wybrano {len(wyniki_siatki)} punktów.")
-    return pd.DataFrame(wyniki_siatki).reset_index(drop=True) 
+    return pd.DataFrame(wyniki_siatki).reset_index(drop=True)
