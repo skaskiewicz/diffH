@@ -11,11 +11,12 @@ from matplotlib.path import Path
 from ..config.settings import DEBUG_MODE
 
 
-def generuj_srodki_heksagonalne(
+def generuj_srodki_heksagonalne_wektorowo(
     obszar_wielokat: np.ndarray, odleglosc_miedzy_punktami: float
 ) -> np.ndarray:
     """
     Generuje i filtruje środki okręgów w siatce heksagonalnej wewnątrz zadanego wieloboku.
+    WERSJA ZOPTYMALIZOWANA Z UŻYCIEM WEKTORYZACJI NUMPY.
 
     :param obszar_wielokat: Tablica NumPy z wierzchołkami wieloboku [[x1, y1], ...].
     :param odleglosc_miedzy_punktami: Oczekiwana odległość między środkami okręgów.
@@ -24,35 +25,63 @@ def generuj_srodki_heksagonalne(
     d = odleglosc_miedzy_punktami
     dx, dy = d, d * np.sqrt(3) / 2
     sciezka_obszaru = Path(obszar_wielokat)
+
+    # 1. Określ prostokątny obszar otaczający wielobok
     min_x, min_y = np.min(obszar_wielokat, axis=0)
     max_x, max_y = np.max(obszar_wielokat, axis=0)
-    lista_srodkow = []
-    y_coord, wiersz = min_y, 0
-    while y_coord < max_y + dy:
-        x_coord = min_x
-        if wiersz % 2 != 0:
-            x_coord -= dx / 2
-        while x_coord < max_x + dx:
-            if sciezka_obszaru.contains_point((x_coord, y_coord)):
-                lista_srodkow.append((x_coord, y_coord))
-            x_coord += dx
-        y_coord += dy
-        wiersz += 1
-    if not lista_srodkow:
-        return np.array([])
-    
-    lista_srodkow.sort(key=lambda p: (p[1], p[0]))
 
-    if DEBUG_MODE and lista_srodkow:
+    # 2. Wygeneruj wszystkie punkty-kandydatów w siatce heksagonalnej
+    #    pokrywającej ten prostokąt. Zamiast pętli, tworzymy dwie siatki i je łączymy.
+    
+    # Siatka dla rzędów parzystych (0, 2, 4, ...)
+    y_parzyste = np.arange(min_y, max_y + dy, dy * 2)
+    x_parzyste = np.arange(min_x, max_x + dx, dx)
+    grid_parzyste_x, grid_parzyste_y = np.meshgrid(x_parzyste, y_parzyste)
+
+    # Siatka dla rzędów nieparzystych (1, 3, 5, ...), przesunięta w osi X
+    y_nieparzyste = np.arange(min_y + dy, max_y + dy, dy * 2)
+    x_nieparzyste = np.arange(min_x - dx / 2, max_x + dx, dx)
+    grid_nieparzyste_x, grid_nieparzyste_y = np.meshgrid(x_nieparzyste, y_nieparzyste)
+
+    # Połącz obie siatki w jedną dużą tablicę punktów (N, 2)
+    punkty_parzyste = np.vstack([grid_parzyste_x.ravel(), grid_parzyste_y.ravel()]).T
+    punkty_nieparzyste = np.vstack([grid_nieparzyste_x.ravel(), grid_nieparzyste_y.ravel()]).T
+    
+    # Sprawdzenie, czy którykolwiek z gridów nie jest pusty
+    if punkty_parzyste.size > 0 and punkty_nieparzyste.size > 0:
+        wszystkie_punkty = np.vstack([punkty_parzyste, punkty_nieparzyste])
+    elif punkty_parzyste.size > 0:
+        wszystkie_punkty = punkty_parzyste
+    elif punkty_nieparzyste.size > 0:
+        wszystkie_punkty = punkty_nieparzyste
+    else:
+        return np.array([]) # Zwróć pustą tablicę, jeśli nie ma kandydatów
+
+    # 3. Użyj ZWEKTORYZOWANEJ metody `contains_points` do sprawdzenia wszystkich punktów naraz.
+    maska_wewnatrz = sciezka_obszaru.contains_points(wszystkie_punkty)
+    
+    # 4. Wybierz tylko te punkty, które znalazły się wewnątrz wieloboku
+    srodki_wewnatrz = wszystkie_punkty[maska_wewnatrz]
+
+    if srodki_wewnatrz.shape[0] == 0:
+        return np.array([])
+
+    # 5. Posortuj wyniki. np.lexsort jest wydajnym sposobem sortowania po wielu kolumnach.
+    #    Sortuje najpierw po drugiej kolumnie (y), a potem po pierwszej (x).
+    posortowane_indeksy = np.lexsort((srodki_wewnatrz[:, 0], srodki_wewnatrz[:, 1]))
+    posortowane_srodki = srodki_wewnatrz[posortowane_indeksy]
+
+    # Blok debugowania (przystosowany do pracy z tablicą NumPy)
+    if DEBUG_MODE and posortowane_srodki.shape[0] > 0:
         try:
-            srodki_df = pd.DataFrame(lista_srodkow, columns=['x', 'y'])
+            srodki_df = pd.DataFrame(posortowane_srodki, columns=['x', 'y'])
             srodki_df.insert(0, 'id', [f"s_{i+1}" for i in range(len(srodki_df))])
             srodki_df.to_csv("debug_siatka_srodki.csv", sep=';', index=False, float_format='%.2f')
             logging.debug(f"Eksportowano {len(srodki_df)} środków siatki do pliku debug_siatka_srodki.csv")
         except Exception as e:
             logging.error(f"Nie udało się wyeksportować środków siatki do pliku CSV: {e}")
 
-    return np.array(lista_srodkow)
+    return posortowane_srodki
 
 
 def znajdz_punkty_dla_siatki(
@@ -80,7 +109,7 @@ def znajdz_punkty_dla_siatki(
     punkty_np = dane_punktow.values
     drzewo_kd = KDTree(punkty_np[:, :2])
     print("\nGenerowanie siatki pokrycia heksagonalnego...")
-    lista_srodkow = generuj_srodki_heksagonalne(obszar_wielokat, odleglosc_siatki)
+    lista_srodkow = generuj_srodki_heksagonalne_wektorowo(obszar_wielokat, odleglosc_siatki) 
     if lista_srodkow.shape[0] == 0:
         print(
             f"{Fore.YELLOW}Nie wygenerowano żadnych punktów siatki wewnątrz zadanego obszaru."
