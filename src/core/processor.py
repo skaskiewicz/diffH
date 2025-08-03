@@ -15,7 +15,8 @@ from ..utils.logging_config import setup_logging
 from ..utils.ui_helpers import (
     clear_screen, display_welcome_screen, get_user_choice,
     get_file_path, get_max_distance, ask_swap_xy,
-    get_geoportal_tolerance, get_round_decimals, ask_load_config
+    get_geoportal_tolerance, get_round_decimals, ask_load_config,
+    get_comparison_tolerance
 )
 from ..utils.config_manager import load_config, save_config_for_mode
 from ..config.settings import DEBUG_MODE, DEFAULT_SPARSE_GRID_DISTANCE
@@ -31,8 +32,9 @@ def process_data(
     comparison_df: Optional[pd.DataFrame],
     use_geoportal: bool,
     max_distance: float,
-    geoportal_tolerance: Optional[float] = None,
     round_decimals: int = 1,
+    comparison_tolerance: Optional[float] = None,
+    geoportal_tolerance: Optional[float] = None,
 ) -> pd.DataFrame:
     """
     Główna funkcja przetwarzająca dane wejściowe, wykonująca transformację współrzędnych,
@@ -44,7 +46,6 @@ def process_data(
     
     geoportal_heights, transformed_points = {}, []
     if use_geoportal:
-        # Wyświetl informację o metodzie transformacji
         transformation_method = get_transformation_method_info()
         print(f"{Fore.CYAN}Metoda transformacji: {transformation_method}{Style.RESET_ALL}")
         
@@ -53,37 +54,21 @@ def process_data(
             geoportal_heights = get_geoportal_heights_concurrent(transformed_points)
 
     if DEBUG_MODE and use_geoportal:
-        # 1. Eksport wyników transformacji
         if transformed_points:
-            transform_results_for_debug = []
-            for i, point in enumerate(transformed_points):
-                original_id = input_df.iloc[i]['id']
-                if point:
-                    transform_results_for_debug.append({'id_punktu': original_id, 'x_2180': point[0], 'y_2180': point[1]})
-                else:
-                    transform_results_for_debug.append({'id_punktu': original_id, 'x_2180': 'Błąd', 'y_2180': 'Błąd'})
-            
+            transform_results_for_debug = [
+                {'id_punktu': input_df.iloc[i]['id'], 'x_2180': p[0], 'y_2180': p[1]} if p else {'id_punktu': input_df.iloc[i]['id'], 'x_2180': 'Błąd', 'y_2180': 'Błąd'}
+                for i, p in enumerate(transformed_points)
+            ]
             if transform_results_for_debug:
-                debug_transform_df = pd.DataFrame(transform_results_for_debug)
-                debug_transform_df.to_csv("debug_transformacja_wyniki.csv", sep=';', index=False, float_format='%.2f')
+                pd.DataFrame(transform_results_for_debug).to_csv("debug_transformacja_wyniki.csv", sep=';', index=False, float_format='%.2f')
                 logging.debug("Zapisano wyniki transformacji do pliku debug_transformacja_wyniki.csv")
 
-        # 2. Eksport punktów, dla których nie udało się pobrać wysokości
-        missing_height_points = []
-        for i, transformed_point in enumerate(transformed_points):
-            if transformed_point:
-                lookup_key = f"{transformed_point[1]:.2f} {transformed_point[0]:.2f}"
-                if lookup_key not in geoportal_heights:
-                    original_point = input_df.iloc[i]
-                    missing_height_points.append({
-                        'id_odniesienia': original_point['id'],
-                        'x_odniesienia': original_point['x'],
-                        'y_odniesienia': original_point['y']
-                    })
-        
+        missing_height_points = [
+            {'id_odniesienia': input_df.iloc[i]['id'], 'x_odniesienia': input_df.iloc[i]['x'], 'y_odniesienia': input_df.iloc[i]['y']}
+            for i, p in enumerate(transformed_points) if p and f"{p[1]:.2f} {p[0]:.2f}" not in geoportal_heights
+        ]
         if missing_height_points:
-            debug_missing_df = pd.DataFrame(missing_height_points)
-            debug_missing_df.to_csv("debug_geoportal_brak_wysokosci.csv", sep=';', index=False, float_format=f'%.{round_decimals}f')
+            pd.DataFrame(missing_height_points).to_csv("debug_geoportal_brak_wysokosci.csv", sep=';', index=False, float_format=f'%.{round_decimals}f')
             logging.debug(f"Zapisano {len(missing_height_points)} punktów bez wysokości z Geoportalu do pliku debug_geoportal_brak_wysokosci.csv")
             
     tree_comparison = None
@@ -102,93 +87,92 @@ def process_data(
             "y_odniesienia": point["y"],
             "h_odniesienia": point["h"],
         }
+        
         if tree_comparison is not None and comparison_df is not None:
+            row_data.update({
+                "id_porownania": "brak_danych",
+                "x_porownania": "brak_danych",
+                "y_porownania": "brak_danych",
+                "h_porownania": "brak_danych",
+                "odleglosc_pary": "brak_danych",
+                "diff_h": "brak_danych",
+            })
+            
             distance, nearest_idx = tree_comparison.query([point["x"], point["y"]])
+            
             if (max_distance == 0) or (distance <= max_distance):
                 nearest_in_comp_point = comparison_df.iloc[nearest_idx]
-                row_data.update(
-                    {
-                        "id_porownania": nearest_in_comp_point["id"],
-                        "x_porownania": nearest_in_comp_point["x"],
-                        "y_porownania": nearest_in_comp_point["y"],
-                        "h_porownania": nearest_in_comp_point["h"],
-                        "odleglosc_pary": distance,
-                    }
-                )
+                row_data.update({
+                    "id_porownania": nearest_in_comp_point["id"],
+                    "x_porownania": nearest_in_comp_point["x"],
+                    "y_porownania": nearest_in_comp_point["y"],
+                    "h_porownania": nearest_in_comp_point["h"],
+                    # POWRÓT DO STANDARDOWEGO ZAOKRĄGLANIA
+                    "odleglosc_pary": round(distance, 3),
+                })
                 try:
                     diff = float(point["h"]) - float(nearest_in_comp_point["h"])
                     diff_rounded = round(diff, round_decimals)
-                    if diff_rounded == -0.0:
-                        diff_rounded = 0.0
-                    row_data["diff_h"] = diff_rounded
+                    row_data["diff_h"] = 0.0 if diff_rounded == -0.0 else diff_rounded
                 except (ValueError, TypeError):
                     row_data["diff_h"] = "brak_danych"
                 paired_count += 1
-                
+
         if use_geoportal and i < len(transformed_points):
             transformed_point = transformed_points[i]
-            if transformed_point is not None:
+            if transformed_point:
                 easting_2180, northing_2180 = transformed_point
-                # lookup_key w formacie 'Y X' z dwoma miejscami po przecinku
                 lookup_key = f"{northing_2180:.2f} {easting_2180:.2f}"
                 height = geoportal_heights.get(lookup_key, "brak_danych")
                 row_data["geoportal_h"] = str(height)
-                if height == "brak_danych":
-                    logging.debug(f"Brak wysokości z Geoportalu dla punktu {point['id']} ({lookup_key})")
                 if height != "brak_danych" and pd.notnull(point["h"]):
                     try:
-                        diff_h_geoportal = round(
-                            float(point["h"]) - float(height), round_decimals
-                        )
-                        if diff_h_geoportal == -0.0:
-                            diff_h_geoportal = 0.0
-                        row_data["diff_h_geoportal"] = diff_h_geoportal
-                        if geoportal_tolerance is not None:
-                            row_data["osiaga_dokladnosc"] = (
-                                "Tak"
-                                if abs(diff_h_geoportal) <= geoportal_tolerance
-                                else "Nie"
-                            )
+                        diff_h_geoportal = round(float(point["h"]) - float(height), round_decimals)
+                        row_data["diff_h_geoportal"] = 0.0 if diff_h_geoportal == -0.0 else diff_h_geoportal
                     except (ValueError, TypeError):
                         row_data["diff_h_geoportal"] = "brak_danych"
                 else:
-                    row_data["diff_h_geoportal"] = "brak_danych"
+                    if "diff_h_geoportal" not in row_data:
+                        row_data["diff_h_geoportal"] = "brak_danych"
             else:
                 row_data["geoportal_h"] = "brak_danych"
                 row_data["diff_h_geoportal"] = "brak_danych"
-                logging.debug(f"Punkt {point['id']}: Brak przetransformowanych współrzędnych lub brak danych z geoportalu.")
+
+        if geoportal_tolerance is not None and "diff_h_geoportal" in row_data:
+            diff_val = row_data["diff_h_geoportal"]
+            if isinstance(diff_val, (int, float)):
+                row_data["osiaga_dokladnosc"] = "Tak" if abs(diff_val) <= geoportal_tolerance else "Nie"
+        elif comparison_tolerance is not None and "diff_h" in row_data:
+            diff_val = row_data["diff_h"]
+            if isinstance(diff_val, (int, float)):
+                row_data["osiaga_dokladnosc"] = "Tak" if abs(diff_val) <= comparison_tolerance else "Nie"
+
         results.append(row_data)
 
     if comparison_df is not None:
-        print(
-            f"{Fore.GREEN}Znaleziono i połączono {paired_count} par punktów.{Style.RESET_ALL}"
-        )
+        print(f"{Fore.GREEN}Znaleziono i połączono {paired_count} par punktów.{Style.RESET_ALL}")
         logging.debug(f"Znaleziono i połączono {paired_count} par punktów.")
         
     results_df = pd.DataFrame(results)
+    
+    sort_col = None
     if use_geoportal and "diff_h_geoportal" in results_df.columns:
-        results_df["__abs_diff_h_geoportal"] = pd.to_numeric(
-            results_df["diff_h_geoportal"], errors="coerce"
-        ).abs()
-        results_df = results_df.sort_values(
-            by="__abs_diff_h_geoportal", ascending=False
-        ).drop(columns=["__abs_diff_h_geoportal"])
+        sort_col = "diff_h_geoportal"
+    elif not use_geoportal and "diff_h" in results_df.columns:
+        sort_col = "diff_h"
         
+    if sort_col:
+        results_df[f"__abs_{sort_col}"] = pd.to_numeric(results_df[sort_col], errors="coerce").abs()
+        results_df = results_df.sort_values(by=f"__abs_{sort_col}", ascending=False).drop(columns=[f"__abs_{sort_col}"])
+
     final_cols = [
-        "id_odniesienia",
-        "x_odniesienia",
-        "y_odniesienia",
-        "h_odniesienia",
-        "diff_h_geoportal",
-        "geoportal_h",
-        "osiaga_dokladnosc",
-        "id_porownania",
-        "x_porownania",
-        "y_porownania",
-        "h_porownania",
-        "diff_h",
+        "id_odniesienia", "x_odniesienia", "y_odniesienia", "h_odniesienia",
+        "diff_h_geoportal", "geoportal_h",
+        "id_porownania", "x_porownania", "y_porownania", "h_porownania", "diff_h",
         "odleglosc_pary",
+        "osiaga_dokladnosc",
     ]
+    
     existing_cols = [col for col in final_cols if col in results_df.columns]
     logging.debug("Zakończono główną funkcję przetwarzania danych.")
     return results_df[existing_cols]
@@ -212,11 +196,8 @@ def main(config_path: str):
 
     settings_to_save = {}
 
-    # --- Pytania o ustawienia (zgodnie z oryginalną kolejnością) ---
-
     max_distance = 0.0
     if choice in [1, 3]:
-        # Poprawka dla Pylance: Sprawdzamy, czy mode_settings nie jest None
         if use_saved_settings and mode_settings is not None and 'max_distance' in mode_settings:
             max_distance = mode_settings['max_distance']
         else:
@@ -229,9 +210,7 @@ def main(config_path: str):
         round_decimals = get_round_decimals()
         settings_to_save['round_decimals'] = round_decimals
 
-    input_file = get_file_path(
-        f"\n{Fore.YELLOW}Podaj ścieżkę do pliku wejściowego: {Style.RESET_ALL}"
-    )
+    input_file = get_file_path(f"\n{Fore.YELLOW}Podaj ścieżkę do pliku wejściowego: {Style.RESET_ALL}")
 
     if use_saved_settings and mode_settings is not None and 'swap_input' in mode_settings:
         swap_input = mode_settings['swap_input']
@@ -239,16 +218,20 @@ def main(config_path: str):
         swap_input = ask_swap_xy("wejściowego")
         settings_to_save['swap_input'] = swap_input
         
-    comparison_file, swap_comparison = None, False
+    comparison_file, swap_comparison, comparison_tolerance = None, False, None
     if choice in [1, 3]:
-        comparison_file = get_file_path(
-            f"{Fore.YELLOW}Podaj ścieżkę do pliku porównawczego: {Style.RESET_ALL}"
-        )
+        comparison_file = get_file_path(f"{Fore.YELLOW}Podaj ścieżkę do pliku porównawczego: {Style.RESET_ALL}")
         if use_saved_settings and mode_settings is not None and 'swap_comparison' in mode_settings:
             swap_comparison = mode_settings['swap_comparison']
         else:
             swap_comparison = ask_swap_xy("porównawczego")
             settings_to_save['swap_comparison'] = swap_comparison
+        
+        if use_saved_settings and mode_settings is not None and 'comparison_tolerance' in mode_settings:
+            comparison_tolerance = mode_settings['comparison_tolerance']
+        else:
+            comparison_tolerance = get_comparison_tolerance()
+            settings_to_save['comparison_tolerance'] = comparison_tolerance
             
     geoportal_tolerance = None
     if choice in [2, 3]:
@@ -279,7 +262,6 @@ def main(config_path: str):
                         if parsed_dist > 0:
                             sparse_grid_distance = parsed_dist
                     except ValueError:
-                        # Poprawka dla Ruff: pusta instrukcja pass jest czytelniejsza
                         pass
                 settings_to_save['sparse_grid_distance'] = sparse_grid_distance
 
@@ -293,11 +275,9 @@ def main(config_path: str):
             
             zakres_df = load_scope_data(zakres_file, swap_scope)
 
-    # Zapisz nowe ustawienia, jeśli były wprowadzane ręcznie
     if settings_to_save:
         save_config_for_mode(choice, settings_to_save, config_path)
 
-    # --- Wczytywanie i przetwarzanie danych ---
     print(f"\n{Fore.CYAN}--- Wczytywanie danych ---{Style.RESET_ALL}")
     input_df = load_data(input_file, swap_input)
     if input_df is None or input_df.empty:
@@ -319,7 +299,15 @@ def main(config_path: str):
             print(f"{Fore.RED}Plik wejściowy jest w strefie EPSG: {input_epsg}, a plik z zakresem w strefie EPSG: {zakres_epsg}.")
             return
 
-    results_df = process_data(input_df, comparison_df, choice in [2, 3], max_distance, geoportal_tolerance, round_decimals)
+    results_df = process_data(
+        input_df, 
+        comparison_df, 
+        choice in [2, 3], 
+        max_distance, 
+        round_decimals,
+        comparison_tolerance=comparison_tolerance,
+        geoportal_tolerance=geoportal_tolerance
+    )
 
     if sparse_grid_requested and zakres_df is not None and "osiaga_dokladnosc" in results_df.columns:
         print(f"{Fore.CYAN}\n--- Przetwarzanie rozrzedzonej siatki ---{Style.RESET_ALL}")
@@ -347,7 +335,6 @@ def main(config_path: str):
 
 if __name__ == "__main__":
     try:
-        # Ten kod jest tu na wypadek, gdyby plik był uruchamiany bezpośrednio, ale główna logika jest w main.py
         main(config_path="config.json")
     except KeyboardInterrupt:
         print(f"\n{Fore.YELLOW}Przerwano działanie programu.{Style.RESET_ALL}")

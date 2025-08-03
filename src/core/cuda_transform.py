@@ -70,7 +70,7 @@ def check_cuda_availability() -> bool:
             device_name = cp.cuda.runtime.getDeviceProperties(best_device)['name'].decode('utf-8')
             logging.info(f"Wybrano urządzenie {best_device}: {device_name}")
             logging.info("CUDA jest dostępne i gotowe do użycia")
-            return False
+            return True
         else:
             logging.warning("Brak odpowiednich urządzeń CUDA")
             return False

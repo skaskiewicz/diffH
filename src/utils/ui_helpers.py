@@ -58,6 +58,7 @@ def ask_load_config(settings: dict) -> bool:
         "round_decimals": "Liczba miejsc po przecinku",
         "swap_input": "Zamiana X/Y w pliku wejściowym",
         "swap_comparison": "Zamiana X/Y w pliku porównawczym",
+        "comparison_tolerance": "Tolerancja względem pliku",
         "geoportal_tolerance": "Tolerancja względem Geoportalu",
         "sparse_grid_requested": "Eksport rozrzedzonej siatki",
         "sparse_grid_distance": "Odległość dla siatki",
@@ -184,6 +185,29 @@ def get_geoportal_tolerance() -> float:
         except ValueError:
             print(f"{Fore.RED}Błąd: Wprowadź poprawną liczbę.{Style.RESET_ALL}")
 
+def get_comparison_tolerance() -> float:
+    """
+    Funkcja do pobrania dopuszczalnej różnicy wysokości względem pliku wejściowego w metrach.
+    """
+    default_tolerance = 0.2
+    while True:
+        try:
+            prompt = (
+                f"\n{Fore.YELLOW}Podaj dopuszczalną różnicę wysokości względem pliku wejściowego (w metrach, np. 0.2) "
+                f"(domyślnie: {default_tolerance}): {Style.RESET_ALL}"
+            )
+            val = input(prompt)
+            if not val.strip():
+                print(
+                    f"{Fore.CYAN}Przyjęto domyślną wartość: {default_tolerance}{Style.RESET_ALL}"
+                )
+                return default_tolerance
+            val = float(val.replace(",", "."))
+            if val >= 0:
+                return val
+            print(f"{Fore.RED}Błąd: Wartość nie może być ujemna.{Style.RESET_ALL}")
+        except ValueError:
+            print(f"{Fore.RED}Błąd: Wprowadź poprawną liczbę.{Style.RESET_ALL}")
 
 def get_round_decimals() -> int:
     """
