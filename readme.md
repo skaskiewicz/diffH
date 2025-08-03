@@ -25,14 +25,14 @@
     *   Obliczanie różnicy wysokości pomiędzy plikiem wejściowym a geoportalem (`diff_h_geoportal`).
     *   W trybie porównania plik + plik + geoportal: dodatkowa kolumna `diff_h_geoportal_pair` (różnica h_porownania - geoportal_h).
 *   **Tolerancja dokładności:**
-    *   Możliwość podania przez użytkownika dopuszczalnej różnicy wysokości względem geoportalu.
-    *   Kolumna `osiaga_dokladnosc` (Tak/Nie) informuje, czy różnica mieści się w zadanej tolerancji.
+    *   Możliwość podania przez użytkownika dopuszczalnej różnicy wysokości **zarówno względem Geoportalu, jak i względem drugiego pliku**.
+    *   Kolumna `osiaga_dokladnosc` (Tak/Nie) informuje, czy różnica (`diff_h` lub `diff_h_geoportal`) mieści się w zadanej tolerancji.
 *   **Inteligentna Analiza Danych:**
     *   **Automatyczne wykrywanie separatora** w plikach wejściowych (obsługuje średnik, przecinek, spację/tabulator).
     *   **Automatyczne wykrywanie konwencji osi współrzędnych** (czy plik używa układu geodezyjnego `X=Północ, Y=Wschód`, czy standardu GIS `X=Wschód, Y=Północ`). Użytkownik może też ręcznie wskazać zamianę osi (Y,X).
 *   **Parametryzacja zaokrąglania:** Możliwość zdefiniowania przez użytkownika liczby miejsc po przecinku dla współrzędnych i wysokości w danych wejściowych i wynikowych.
 *   **Przyjazny Interfejs:** Skrypt prowadzi użytkownika krok po kroku przez proces wyboru opcji i podawania plików.
-*   **Czyste Pliki Wynikowe:** Generuje przejrzyste, tabelaryczne pliki `wynik.csv` (oraz `_dokladne.csv` i `_niedokladne.csv`), gotowe do importu w innych programach (np. Excel, QGIS). Wyniki są sortowane malejąco według wartości bezwzględnej różnicy wysokości względem geoportalu.
+*   **Czyste Pliki Wynikowe:** Generuje przejrzyste, tabelaryczne pliki `wynik.csv` (oraz `_dokladne.csv` i `_niedokladne.csv`), gotowe do importu w innych programach (np. Excel, QGIS). Wyniki są sortowane malejąco według wartości bezwzględnej różnicy wysokości.
 *   **Eksport do GeoPackage (GPKG):** Możliwość zapisu wyników do pliku GeoPackage, który można otworzyć bezpośrednio w QGIS lub innych programach GIS. Ułatwia to dalszą analizę i wizualizację danych przestrzennych.
 
 ### Wymagania i Instalacja
@@ -96,10 +96,8 @@ Po wykonaniu tych kroków środowisko jest gotowe do pracy.
     ```
 3.  Postępuj zgodnie z instrukcjami na ekranie:
     *   Wybierz tryb porównania (1 - plik z plikiem, 2 - plik z geoportalem, 3 - plik z plikiem i geoportalem).
-    *   Jeśli wybrałeś porównanie plików, podaj maksymalną odległość wyszukiwania pary.
-    *   Podaj ścieżki do pliku wejściowego i (opcjonalnie) porównawczego.
-    *   Jeśli wybrałeś porównanie z geoportalem, podaj dopuszczalną różnicę wysokości.
-4.  Po zakończeniu pracy, w folderze ze skryptem zostanie utworzony plik `wynik.csv` oraz plik `wynik.gpkg` (GeoPackage do GIS).
+    *   Podaj ścieżki do pliku wejściowego i (opcjonalnie) porównawczego oraz inne parametry zgodnie z monitami.
+4.  Po zakończeniu pracy, w folderze ze skryptem zostaną utworzone pliki wynikowe.
 
 ### Format Pliku Wejściowego
 
@@ -131,62 +129,62 @@ Po wykonaniu tych kroków środowisko jest gotowe do pracy.
 *   Możliwe kolumny:
     *   `id_odniesienia`, `x_odniesienia`, `y_odniesienia`, `h_odniesienia`: Dane z pliku wejściowego.
     *   `diff_h_geoportal`: Różnica wysokości pomiędzy plikiem wejściowym a geoportalem (wstawiana po h_odniesienia).
-    *   `osiaga_dokladnosc`: Informacja (Tak/Nie), czy różnica wysokości mieści się w zadanej tolerancji (ostatnia kolumna).
+    *   `osiaga_dokladnosc`: Informacja (Tak/Nie), czy różnica wysokości (`diff_h` lub `diff_h_geoportal`) mieści się w zadanej tolerancji (ostatnia kolumna).
     *   `eksport`: Flaga logiczna (True/False) – czy punkt spełnia warunek dokładnościowy.
     *   `id_porownania`, `x_porownania`, `y_porownania`, `h_porownania`: Dane dopasowanego punktu z pliku porównawczego.
     *   `diff_h`: Różnica wysokości pomiędzy plikiem wejściowym a porównawczym.
-    *   `odleglosc_pary`: Odległość w metrach między sparowanymi punktami.
+    *   `odleglosc_pary`: Odległość w metrach między sparowanymi punktami, zaokrąglona do 3 miejsc po przecinku.
     *   `diff_h_geoportal_pair`: Różnica wysokości pomiędzy punktem porównawczym a geoportalem (w trybie plik+plik+geoportal).
     *   `geoportal_h`: Wysokość pobrana z serwisu Geoportal.gov.pl.
 
 ### Szczegółowy Przebieg Pracy Programu
 
-1. **Uruchomienie programu**
-    * Upewnij się, że środowisko wirtualne jest aktywne (jeśli je utworzyłeś).
-    * Uruchom skrypt poleceniem:
-      ```bash
-      python geo_comparator.py
-      ```
-2. **Wybór trybu działania**
-    * Program wyświetli menu z trzema trybami:
-        1. Porównanie pliku wejściowego z drugim plikiem.
-        2. Porównanie pliku wejściowego z danymi z Geoportal.gov.pl.
-        3. Porównanie pliku wejściowego z drugim plikiem ORAZ z Geoportal.gov.pl.
-    * Wybierz odpowiednią opcję wpisując 1, 2 lub 3.
-3. **Podanie parametrów**
-    * Jeśli wybrano tryb 1 lub 3, podaj maksymalną odległość wyszukiwania pary punktów (w metrach). Wpisz 0, aby pominąć ten warunek.
-    * Podaj liczbę miejsc po przecinku do zaokrąglenia danych wejściowych.
-    * Podaj ścieżkę do pliku wejściowego (możesz przeciągnąć plik z Eksploratora Windows – program automatycznie usunie cudzysłowy lub apostrofy otaczające ścieżkę).
-    * Odpowiedz, czy plik wejściowy ma zamienioną kolejność kolumn (Y,X zamiast X,Y).
-    * Jeśli wybrano tryb 1 lub 3, podaj ścieżkę do pliku porównawczego i odpowiedz na pytanie o zamianę kolumn.
-    * Jeśli wybrano tryb 2 lub 3, podaj dopuszczalną różnicę wysokości względem geoportalu (tolerancję).
-    * Jeśli wybrano tryb 2 lub 3, program zapyta, czy wygenerować **rozrzedzoną siatkę punktów**. Jeśli odpowiesz twierdząco:
-        * Podaj oczekiwaną odległość między punktami siatki (w metrach).
-        * Podaj ścieżkę do pliku z zakresem (wielobokiem), w którym ma być wygenerowana siatka.
-        * Odpowiedz, czy plik z zakresem ma zamienioną kolejność kolumn.
-4. **Wczytywanie i analiza danych**
-    * Program automatycznie wykryje separator, strukturę pliku wejściowego oraz sprawdzi zgodność stref układu współrzędnych (jeśli podano plik z zakresem).
-    * W razie potrzeby doda automatyczną numerację punktów.
-    * Przekształci współrzędne do odpowiedniego układu.
-5. **Pobieranie danych z Geoportalu** (jeśli wybrano tryb 2 lub 3)
-    * Współrzędne są transformowane do układu 2180 i wysyłane do API Geoportalu w paczkach po 300 punktów.
-    * Wyniki są dopasowywane do punktów wejściowych z zachowaniem precyzji (zaokrąglenie do 2 miejsc po przecinku).
-6. **Porównanie z plikiem referencyjnym** (jeśli wybrano tryb 1 lub 3)
-    * Program buduje indeks przestrzenny i paruje punkty na podstawie odległości oraz wzajemności.
-7. **Obliczanie różnic i flag dokładności**
-    * Dla każdego punktu obliczana jest różnica wysokości względem geoportalu i/lub pliku porównawczego.
-    * Jeśli podano tolerancję, program ustala, czy punkt spełnia warunek dokładnościowy (`osiaga_dokladnosc` = Tak/Nie).
-    * Kolumna `eksport` w plikach GPKG przyjmuje wartość True tylko dla punktów spełniających warunek dokładnościowy.
-8. **Generowanie rozrzedzonej siatki** (jeśli zażądano)
-    * Program wybiera reprezentatywne punkty spełniające kryterium dokładności, które pokrywają zadany obszar w formie siatki heksagonalnej.
-    * Wyniki zapisywane są do plików `wynik_siatka.csv` i `wynik_siatka.gpkg`.
-9. **Eksport wyników**
-    * Tworzone są pliki `wynik.csv`, `wynik_dokladne.csv` i `wynik_niedokladne.csv`.
-    * Tworzone są trzy pliki GeoPackage:
-        * `wynik.gpkg` – wszystkie punkty.
-        * `wynik_dokladne.gpkg` – tylko punkty spełniające warunek dokładnościowy.
-        * `wynik_niedokladne.gpkg` – tylko punkty niespełniające warunku dokładnościowego.
-    * Pliki GPKG można otworzyć w QGIS lub innym programie GIS.
+1.  **Uruchomienie programu**
+    *   Upewnij się, że środowisko wirtualne jest aktywne (jeśli je utworzyłeś).
+    *   Uruchom skrypt poleceniem:
+        ```bash
+        python geo_comparator.py
+        ```
+2.  **Wybór trybu działania**
+    *   Program wyświetli menu z trzema trybami:
+        1.  Porównanie pliku wejściowego z drugim plikiem.
+        2.  Porównanie pliku wejściowego z danymi z Geoportal.gov.pl.
+        3.  Porównanie pliku wejściowego z drugim plikiem ORAZ z Geoportal.gov.pl.
+    *   Wybierz odpowiednią opcję wpisując 1, 2 lub 3.
+3.  **Podanie parametrów**
+    *   Jeśli wybrano tryb 1 lub 3, podaj maksymalną odległość wyszukiwania pary punktów (w metrach). Wpisz 0, aby pominąć ten warunek.
+    *   Jeśli wybrano tryb 1 lub 3, podaj dopuszczalną różnicę wysokości względem pliku porównawczego (tolerancję).
+    *   Podaj liczbę miejsc po przecinku do zaokrąglenia danych wejściowych.
+    *   Podaj ścieżkę do pliku wejściowego (możesz przeciągnąć plik z Eksploratora Windows – program automatycznie usunie cudzysłowy lub apostrofy otaczające ścieżkę).
+    *   Odpowiedz, czy plik wejściowy ma zamienioną kolejność kolumn (Y,X zamiast X,Y).
+    *   Jeśli wybrano tryb 1 lub 3, podaj ścieżkę do pliku porównawczego i odpowiedz na pytanie o zamianę kolumn.
+    *   Jeśli wybrano tryb 2 lub 3, podaj dopuszczalną różnicę wysokości względem geoportalu (tolerancję).
+    *   Jeśli wybrano tryb 2 lub 3, program zapyta, czy wygenerować **rozrzedzoną siatkę punktów**. Jeśli odpowiesz twierdząco:
+        *   Podaj oczekiwaną odległość między punktami siatki (w metrach).
+        *   Podaj ścieżkę do pliku z zakresem (wielobokiem), w którym ma być wygenerowana siatka.
+        *   Odpowiedz, czy plik z zakresem ma zamienioną kolejność kolumn.
+4.  **Wczytywanie i analiza danych**
+    *   Program automatycznie wykryje separator, strukturę pliku wejściowego oraz sprawdzi zgodność stref układu współrzędnych (jeśli podano plik z zakresem).
+    *   W razie potrzeby doda automatyczną numerację punktów.
+    *   Przekształci współrzędne do odpowiedniego układu.
+5.  **Pobieranie danych z Geoportalu** (jeśli wybrano tryb 2 lub 3)
+    *   Współrzędne są transformowane do układu 2180 i wysyłane do API Geoportalu w paczkach po 300 punktów.
+    *   Wyniki są dopasowywane do punktów wejściowych z zachowaniem precyzji (zaokrąglenie do 2 miejsc po przecinku).
+6.  **Porównanie z plikiem referencyjnym** (jeśli wybrano tryb 1 lub 3)
+    *   Program buduje indeks przestrzenny i paruje punkty na podstawie odległości oraz wzajemności.
+7.  **Obliczanie różnic i flag dokładności**
+    *   Dla każdego punktu obliczana jest różnica wysokości względem geoportalu i/lub pliku porównawczego.
+    *   Jeśli podano tolerancję, program ustala, czy punkt spełnia warunek dokładnościowy (`osiaga_dokladnosc` = Tak/Nie). W trybie 3 priorytet ma tolerancja względem Geoportalu.
+8.  **Generowanie rozrzedzonej siatki** (jeśli zażądano)
+    *   Program wybiera reprezentatywne punkty spełniające kryterium dokładności, które pokrywają zadany obszar w formie siatki heksagonalnej.
+    *   Wyniki zapisywane są do plików `wynik_siatka.csv` i `wynik_siatka.gpkg`.
+9.  **Eksport wyników**
+    *   Tworzone są pliki `wynik.csv`, `wynik_dokladne.csv` i `wynik_niedokladne.csv`.
+    *   Tworzone są trzy pliki GeoPackage:
+        *   `wynik.gpkg` – wszystkie punkty.
+        *   `wynik_dokladne.gpkg` – tylko punkty spełniające warunek dokładnościowy.
+        *   `wynik_niedokladne.gpkg` – tylko punkty niespełniające warunku dokładnościowego.
+    *   Pliki GPKG można otworzyć w QGIS lub innym programie GIS.
 
 ### Tryb Deweloperski
 

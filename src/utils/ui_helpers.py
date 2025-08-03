@@ -49,6 +49,44 @@ def get_user_choice() -> int:
         except ValueError:
             print(f"{Fore.RED}Błąd: Wprowadź poprawną liczbę.")
 
+def ask_load_config(settings: dict) -> bool:
+    """
+    Wyświetla zapisane ustawienia i pyta użytkownika, czy ich użyć.
+    """
+    translations = {
+        "max_distance": "Maksymalna odległość",
+        "round_decimals": "Liczba miejsc po przecinku",
+        "swap_input": "Zamiana X/Y w pliku wejściowym",
+        "swap_comparison": "Zamiana X/Y w pliku porównawczym",
+        "comparison_tolerance": "Tolerancja względem pliku",
+        "geoportal_tolerance": "Tolerancja względem Geoportalu",
+        "sparse_grid_requested": "Eksport rozrzedzonej siatki",
+        "sparse_grid_distance": "Odległość dla siatki",
+        "swap_scope": "Zamiana X/Y w pliku z zakresem"
+    }
+    print(f"\n{Fore.CYAN}--- Znaleziono zapisane ustawienia ---{Style.RESET_ALL}")
+    for key, value in settings.items():
+        label = translations.get(key, key.replace('_', ' ').capitalize())
+        print(f"  - {label}: {Fore.GREEN}{value}{Style.RESET_ALL}")
+    
+    default = "t"
+    while True:
+        resp = (
+            input(
+                f"\n{Fore.YELLOW}Czy chcesz użyć powyższych ustawień? [t/n] (domyślnie: t): {Style.RESET_ALL}"
+            )
+            .strip()
+            .lower()
+        )
+        if not resp:
+            print(f"{Fore.CYAN}Przyjęto domyślną odpowiedź: {default}{Style.RESET_ALL}")
+            return True
+        if resp in ["t", "tak", "y", "yes"]:
+            return True
+        if resp in ["n", "nie", "no"]:
+            return False
+        print(f"{Fore.YELLOW}Wpisz 't' (tak) lub 'n' (nie).{Style.RESET_ALL}")
+
 
 def get_file_path(prompt: str) -> str:
     """Pobiera ścieżkę do pliku od użytkownika"""
@@ -147,6 +185,29 @@ def get_geoportal_tolerance() -> float:
         except ValueError:
             print(f"{Fore.RED}Błąd: Wprowadź poprawną liczbę.{Style.RESET_ALL}")
 
+def get_comparison_tolerance() -> float:
+    """
+    Funkcja do pobrania dopuszczalnej różnicy wysokości względem pliku wejściowego w metrach.
+    """
+    default_tolerance = 0.2
+    while True:
+        try:
+            prompt = (
+                f"\n{Fore.YELLOW}Podaj dopuszczalną różnicę wysokości względem pliku wejściowego (w metrach, np. 0.2) "
+                f"(domyślnie: {default_tolerance}): {Style.RESET_ALL}"
+            )
+            val = input(prompt)
+            if not val.strip():
+                print(
+                    f"{Fore.CYAN}Przyjęto domyślną wartość: {default_tolerance}{Style.RESET_ALL}"
+                )
+                return default_tolerance
+            val = float(val.replace(",", "."))
+            if val >= 0:
+                return val
+            print(f"{Fore.RED}Błąd: Wartość nie może być ujemna.{Style.RESET_ALL}")
+        except ValueError:
+            print(f"{Fore.RED}Błąd: Wprowadź poprawną liczbę.{Style.RESET_ALL}")
 
 def get_round_decimals() -> int:
     """
@@ -172,4 +233,4 @@ def get_round_decimals() -> int:
         except ValueError:
             print(
                 f"{Fore.RED}Błąd: Wprowadź poprawną liczbę całkowitą.{Style.RESET_ALL}"
-            ) 
+            )
