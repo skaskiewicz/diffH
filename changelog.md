@@ -4,6 +4,24 @@ Wszystkie istotne zmiany w tym projekcie będą dokumentowane w tym pliku.
 
 Format bazuje na [Keep a Changelog](https://keepachangelog.com/en/1.0.0/), a projekt stosuje [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.3.1] - 2025-08-02
+
+### Dodano
+
+*   **Tolerancja dokładności dla porównania plik-plik (tryby 1 i 3):**
+    *   Program pyta teraz użytkownika o dopuszczalną różnicę wysokości (`diff_h`) przy porównywaniu z drugim plikiem.
+    *   Generowana jest kolumna `osiaga_dokladnosc` (Tak/Nie) również dla trybu 1, co umożliwia podział plików wynikowych na `_dokladne` i `_niedokladne`.
+    *   Dodano nową opcję `comparison_tolerance` do pliku konfiguracyjnego `config.json`.
+
+### Zmieniono
+
+*   Wartość `odleglosc_pary` w plikach wynikowych jest teraz zaokrąglana do 3 miejsc po przecinku przy użyciu standardowego zaokrąglenia.
+
+### Naprawiono
+
+*   **Krytyczny błąd w trybie 3:** Naprawiono błąd, przez który dane z pliku porównawczego (np. `id_porownania`, `diff_h`) nie były wyświetlane (pokazywały `brak_danych`), gdy jednocześnie aktywne było porównanie z Geoportalem.
+*   Usprawniono logikę przetwarzania, aby zapewnić spójność danych we wszystkich trybach porównawczych.
+
 ## [1.3.0] - 2025-08-01
 
 ### Dodano
