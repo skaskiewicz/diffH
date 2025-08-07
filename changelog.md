@@ -4,6 +4,21 @@ Wszystkie istotne zmiany w tym projekcie będą dokumentowane w tym pliku.
 
 Format bazuje na [Keep a Changelog](https://keepachangelog.com/en/1.0.0/), a projekt stosuje [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.4.0] - 2025-08-03
+
+### Dodano
+
+*   **Tryb 4 - Wzbogacanie danych o wysokość:**
+    *   Dodano nowy tryb działania (opcja 4 w menu), który umożliwia wczytanie pliku z samymi współrzędnymi (w formacie `ID,X,Y` lub `X,Y`).
+    *   Program automatycznie transformuje współrzędne do EPSG:2180, pobiera wysokość z API Geoportal.gov.pl, a następnie zapisuje kompletne dane (`ID,X,Y,H`) do plików wynikowych.
+    *   Wyniki dla tego trybu są zapisywane do plików `wynik_geoportal.csv` i `wynik_geoportal.gpkg`.
+
+### Zmieniono
+
+*   **Refaktoryzacja wczytywania danych:**
+    *   Ujednolicono funkcję `load_data`, aby obsługiwała wszystkie typy plików wejściowych (zarówno te z kolumną wysokości, jak i bez niej), eliminując potrzebę tworzenia osobnej funkcji.
+    *   Poprawiło to strukturę kodu, zmniejszyło jego powielanie i uprościło logikę.
+
 ## [1.3.1] - 2025-08-02
 
 ### Dodano

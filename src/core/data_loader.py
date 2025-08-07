@@ -16,7 +16,9 @@ def load_scope_data(file_path: str, swap_xy: bool = False) -> Optional[pd.DataFr
     Sprawdza, czy kolumny współrzędnych są numeryczne.
     """
     print(f"Wczytuję plik z zakresem: {file_path}")
-    logging.debug(f"Rozpoczęto wczytywanie pliku zakresu: {file_path}, swap_xy={swap_xy}")
+    logging.debug(
+        f"Rozpoczęto wczytywanie pliku zakresu: {file_path}, swap_xy={swap_xy}"
+    )
     df = None
     try:
         file_ext = os.path.splitext(file_path)[1].lower()
@@ -38,18 +40,26 @@ def load_scope_data(file_path: str, swap_xy: bool = False) -> Optional[pd.DataFr
                     if len(temp_df.columns) in [2, 3]:
                         df = temp_df
                         sep_display = "spacja/tab" if sep == r"\s+" else sep
-                        print(f"{Fore.GREEN}Plik wczytany poprawnie (separator: '{sep_display}').")
-                        logging.debug(f"Plik zakresu wczytany z separatorem '{sep_display}'.")
+                        print(
+                            f"{Fore.GREEN}Plik wczytany poprawnie (separator: '{sep_display}')."
+                        )
+                        logging.debug(
+                            f"Plik zakresu wczytany z separatorem '{sep_display}'."
+                        )
                         break
                 except pd.errors.ParserError:
-                    logging.debug(f"Nie udało się sparsować pliku zakresu z separatorem '{sep}'. Próbuję dalej.")
+                    logging.debug(
+                        f"Nie udało się sparsować pliku zakresu z separatorem '{sep}'. Próbuję dalej."
+                    )
                     continue
 
         if df is None:
             print(
                 f"{Fore.RED}Błąd: Nie udało się wczytać pliku zakresu lub ma on niepoprawną liczbę kolumn (oczekiwano 2 lub 3)."
             )
-            logging.error("Nie udało się wczytać pliku zakresu - nie znaleziono separatora lub niepoprawna liczba kolumn.")
+            logging.error(
+                "Nie udało się wczytać pliku zakresu - nie znaleziono separatora lub niepoprawna liczba kolumn."
+            )
             return None
 
         # Pomijanie nagłówka - sprawdzamy każdy element osobno
@@ -70,7 +80,9 @@ def load_scope_data(file_path: str, swap_xy: bool = False) -> Optional[pd.DataFr
                 print(
                     f"{Fore.YELLOW}Wykryto nagłówek w pliku zakresu. Pierwszy wiersz zostanie pominięty.{Style.RESET_ALL}"
                 )
-                logging.debug(f"Wykryto i pominięto nagłówek w pliku zakresu: {df.iloc[0].to_list()}")
+                logging.debug(
+                    f"Wykryto i pominięto nagłówek w pliku zakresu: {df.iloc[0].to_list()}"
+                )
                 df = df.iloc[1:].reset_index(drop=True)
 
         # Jeśli po usunięciu nagłówka ramka jest pusta
@@ -102,32 +114,46 @@ def load_scope_data(file_path: str, swap_xy: bool = False) -> Optional[pd.DataFr
             print(
                 f"{Fore.RED}Błąd: Plik zakresu zawiera nienumeryczne wartości w kolumnach współrzędnych. Popraw plik i spróbuj ponownie."
             )
-            logging.error("Plik zakresu zawiera nienumeryczne wartości w kolumnach X/Y.")
+            logging.error(
+                "Plik zakresu zawiera nienumeryczne wartości w kolumnach X/Y."
+            )
             return None
 
         df.dropna(subset=["x", "y"], inplace=True)
         print(f"Wczytano {len(df)} wierzchołków zakresu.")
-        logging.debug(f"Pomyślnie wczytano i przetworzono {len(df)} wierzchołków zakresu.")
+        logging.debug(
+            f"Pomyślnie wczytano i przetworzono {len(df)} wierzchołków zakresu."
+        )
         return df
 
     except Exception as e:
         print(f"{Fore.RED}Błąd podczas wczytywania pliku zakresu: {e}")
-        logging.error(f"Nieoczekiwany błąd podczas wczytywania pliku zakresu: {e}", exc_info=True)
+        logging.error(
+            f"Nieoczekiwany błąd podczas wczytywania pliku zakresu: {e}", exc_info=True
+        )
         return None
 
 
-def load_data(file_path: str, swap_xy: bool = False) -> Optional[pd.DataFrame]:
+def load_data(
+    file_path: str, swap_xy: bool = False, expect_height_column: bool = True
+) -> Optional[pd.DataFrame]:
     """
     Wczytuje dane z pliku CSV, XLS lub XLSX, sprawdza strukturę i zwraca DataFrame.
+    Steruje oczekiwaniami co do kolumn za pomocą flagi 'expect_height_column'.
+
     Args:
         file_path (str): Ścieżka do pliku z danymi.
-    swap_xy (bool): Czy zamienić kolumny X i Y (domyślnie False).
+        swap_xy (bool): Czy zamienić kolumny X i Y.
+        expect_height_column (bool): Jeśli True, oczekuje kolumny H (tryby 1-3).
+                                    Jeśli False, oczekuje tylko kolumn XY (tryb 4).
     """
     print(f"Wczytuję plik danych: {file_path}")
-    logging.debug(f"Rozpoczęto wczytywanie pliku danych: {file_path}, swap_xy={swap_xy}")
+    logging.debug(
+        f"Rozpoczęto wczytywanie pliku: {file_path}, swap_xy={swap_xy}, expect_height={expect_height_column}"
+    )
     df = None
     try:
-        # 1. Wczytanie surowych danych do DataFrame
+        # 1. Wczytanie surowych danych (logika wspólna)
         file_ext = os.path.splitext(file_path)[1].lower()
         if file_ext in [".xls", ".xlsx"]:
             df = pd.read_excel(file_path, header=None, dtype=str).dropna(
@@ -143,103 +169,118 @@ def load_data(file_path: str, swap_xy: bool = False) -> Optional[pd.DataFrame]:
                     engine="python",
                     dtype=str,
                 ).dropna(how="all", axis=1)
-                if len(temp_df.columns) > 1:
+                # Sprawdzamy, czy w ogóle mamy jakieś kolumny do pracy
+                if len(temp_df.columns) >= 2:
                     df = temp_df
                     sep_display = "spacja/tab" if sep == r"\s+" else sep
                     print(
                         f"{Fore.GREEN}Plik wczytany poprawnie (separator: '{sep_display}')."
                     )
-                    logging.debug(f"Plik danych wczytany z separatorem '{sep_display}'.")
+                    logging.debug(f"Plik wczytany z separatorem '{sep_display}'.")
                     break
 
         if df is None:
             print(
-                f"{Fore.RED}Nie udało się rozpoznać separatora lub plik nie ma poprawnej struktury."
+                f"{Fore.RED}Nie udało się rozpoznać separatora lub plik ma mniej niż 2 kolumny."
             )
-            logging.error("Nie udało się wczytać pliku danych - nie znaleziono separatora lub niepoprawna struktura.")
             return None
 
-        # 2. Pomijanie nagłówka
+        # 2. Pomijanie nagłówka (logika wspólna)
         if len(df) > 0:
             try:
-                # Sprawdź, czy w drugim wierszu jest liczba
-                pd.to_numeric(str(df.iloc[0, 1]).replace(",", "."))
+                # Sprawdź, czy w ostatniej kolumnie jest liczba (najbezpieczniejsza metoda)
+                pd.to_numeric(str(df.iloc[0, -1]).replace(",", "."))
             except (ValueError, TypeError):
                 print(
-                    f"{Fore.YELLOW}Wykryto nagłówek w pliku. Pierwszy wiersz zostanie pominięty.{Style.RESET_ALL}"
+                    f"{Fore.YELLOW}Wykryto nagłówek. Pierwszy wiersz zostanie pominięty.{Style.RESET_ALL}"
                 )
-                logging.debug(f"Wykryto i pominięto nagłówek w pliku danych: {df.iloc[0].to_list()}")
+                logging.debug(f"Wykryto i pominięto nagłówek: {df.iloc[0].to_list()}")
                 df = df.iloc[1:].reset_index(drop=True)
 
-        # 3. Logika walidacji i przypisywania kolumn
+        # 3. Logika walidacji i przypisywania kolumn (zależna od flagi)
         num_cols = len(df.columns)
-        logging.debug(f"Wykryto {num_cols} kolumn w pliku danych.")
-        if num_cols >= 4:
-            if num_cols > 4:
-                print(
-                    f"{Fore.YELLOW}Wykryto więcej niż 4 kolumny. Importowane będą tylko pierwsze 4."
-                )
-                logging.warning(f"Wykryto {num_cols} kolumn, użyte zostaną tylko pierwsze 4.")
-            df = df.iloc[:, :4]
-            df.columns = ["id", "x", "y", "h"]
+        logging.debug(f"Wykryto {num_cols} kolumn.")
 
-        elif num_cols == 3:
-            # Rygorystyczna walidacja numeryczności dla 3 kolumn
-            is_numeric_cols = df.apply(
-                lambda s: pd.to_numeric(
-                    s.astype(str).str.replace(",", "."), errors="coerce"
+        cols_to_process = []
+        if expect_height_column:
+            # --- LOGIKA DLA TRYBÓW 1-3 (z wysokością) ---
+            if num_cols >= 4:
+                if num_cols > 4:
+                    print(
+                        f"{Fore.YELLOW}Wykryto więcej niż 4 kolumny. Użyte zostaną pierwsze 4."
+                    )
+                df = df.iloc[:, :4]
+                df.columns = ["id", "x", "y", "h"]
+            elif num_cols == 3:
+                print(f"{Fore.YELLOW}Wykryto 3 kolumny (brak ID).")
+                prefix = (
+                    input(
+                        f"{Fore.YELLOW}Podaj prefiks dla autonumeracji (np. P): {Style.RESET_ALL}"
+                    ).strip()
+                    or "P"
                 )
-                .notna()
-                .all()
-            ).values
-            if not all(is_numeric_cols):
+                df.columns = ["x", "y", "h"]
+                df.insert(0, "id", [f"{prefix}_{i + 1}" for i in range(len(df))])
+            else:
                 print(
-                    f"{Fore.RED}Błąd: Plik ma 3 kolumny, ale nie wszystkie są numeryczne. Oczekiwano formatu X,Y,H."
+                    f"{Fore.RED}Błąd: Plik musi mieć 3 lub 4 kolumny (wykryto: {num_cols})."
                 )
-                print(f"{Fore.RED}Popraw plik.")
-                logging.error("Plik ma 3 kolumny, ale nie wszystkie są numeryczne.")
                 return None
-
-            # Jeśli walidacja się powiodła
-            print(f"{Fore.YELLOW}Wykryto 3 kolumny numeryczne (brak ID).")
-            prefix = (
-                input(
-                    f"{Fore.YELLOW}Podaj prefiks dla autonumeracji punktów (np. P): {Style.RESET_ALL}"
-                ).strip()
-                or "P"
-            )
-            df.columns = ["x", "y", "h"]
-            df.insert(0, "id", [f"{prefix}_{i + 1}" for i in range(len(df))])
-            print(
-                f"{Fore.GREEN}Dodano automatyczną numerację punktów z prefiksem '{prefix}'."
-            )
-            logging.debug(f"Dodano autonumerację z prefiksem '{prefix}'.")
-
+            cols_to_process = ["x", "y", "h"]
         else:
-            print(
-                f"{Fore.RED}Błąd: Plik musi mieć 3 lub 4 kolumny (wykryto: {num_cols}). Import przerwany."
-            )
-            logging.error(f"Niepoprawna liczba kolumn: {num_cols}. Oczekiwano 3 lub 4.")
-            return None
+            # --- LOGIKA DLA TRYBU 4 (bez wysokości) ---
+            if num_cols >= 3:
+                if num_cols > 3:
+                    print(
+                        f"{Fore.YELLOW}Wykryto więcej niż 3 kolumny. Użyte zostaną pierwsze 3."
+                    )
+                df = df.iloc[:, :3]
+                df.columns = ["id", "x", "y"]
+            elif num_cols == 2:
+                print(f"{Fore.YELLOW}Wykryto 2 kolumny (brak ID).")
+                prefix = (
+                    input(
+                        f"{Fore.YELLOW}Podaj prefiks dla autonumeracji (np. P): {Style.RESET_ALL}"
+                    ).strip()
+                    or "P"
+                )
+                df.columns = ["x", "y"]
+                df.insert(0, "id", [f"{prefix}_{i + 1}" for i in range(len(df))])
+            else:
+                print(
+                    f"{Fore.RED}Błąd: Plik musi mieć 2 lub 3 kolumny (wykryto: {num_cols})."
+                )
+                return None
+            cols_to_process = ["x", "y"]
 
-        # 4. Zamiana X/Y i konwersja na typy numeryczne
+        # 4. Zamiana X/Y i konwersja na typy numeryczne (logika wspólna)
         if swap_xy:
             df[["x", "y"]] = df[["y", "x"]]
-            logging.debug("Zamieniono kolumny X i Y w pliku danych.")
+            logging.debug("Zamieniono kolumny X i Y.")
 
-        for col in ["x", "y", "h"]:
+        for col in cols_to_process:
             df[col] = pd.to_numeric(
                 df[col].astype(str).str.replace(",", "."), errors="coerce"
             )
 
-        df.dropna(subset=["x", "y", "h"], inplace=True)
+        # Sprawdzenie, czy po konwersji nie ma pustych wartości w kluczowych kolumnach
+        if df[cols_to_process].isnull().values.any():
+            print(
+                f"{Fore.RED}Błąd: Plik zawiera nienumeryczne wartości w kolumnach współrzędnych."
+            )
+            logging.error("Plik zawiera nienumeryczne wartości po konwersji.")
+            return None
+
+        df.dropna(subset=cols_to_process, inplace=True)
         print(f"Wczytano {len(df)} wierszy.")
-        logging.debug(f"Pomyślnie wczytano i przetworzono {len(df)} wierszy danych.")
+        logging.debug(f"Pomyślnie wczytano i przetworzono {len(df)} wierszy.")
         return df
 
     except Exception as e:
         print(f"{Fore.RED}Błąd podczas wczytywania pliku danych: {e}")
-        logging.error(f"Nieoczekiwany błąd podczas wczytywania pliku danych: {e}", exc_info=True)
+        logging.error(
+            f"Nieoczekiwany błąd podczas wczytywania pliku: {e}", exc_info=True
+        )
         return None
 
 
@@ -293,4 +334,4 @@ def get_source_epsg(easting_coordinate: float) -> Optional[int]:
             return {"5": 2176, "6": 2177, "7": 2178, "8": 2179}.get(easting_str[0])
     except (ValueError, TypeError, IndexError):
         return None
-    return None 
+    return None
