@@ -52,7 +52,8 @@ def export_to_csv(
     # 2. Eksport tylko spełniających warunek dokładności
     df_ok = df_copy[df_copy["eksport"]].drop(columns=["eksport"])
     if not df_ok.empty:
-        path_ok = csv_path.replace(".csv", "_dokladne.csv")
+        base, ext = os.path.splitext(csv_path)
+        path_ok = f"{base}_dokladne{ext}"
         df_ok.to_csv(
             path_ok,
             sep=";",
@@ -70,7 +71,8 @@ def export_to_csv(
     # 3. Eksport niespełniających warunku dokładności
     df_nok = df_copy[~df_copy["eksport"]].drop(columns=["eksport"])
     if not df_nok.empty:
-        path_nok = csv_path.replace(".csv", "_niedokladne.csv")
+        base, ext = os.path.splitext(csv_path)
+        path_nok = f"{base}_niedokladne{ext}"
         df_nok.to_csv(
             path_nok,
             sep=";",
@@ -152,7 +154,8 @@ def export_to_geopackage(
             # Eksport tylko spełniających warunek dokładności
             gdf_ok = gdf[gdf["eksport"]]
             if not gdf_ok.empty:
-                path_ok = gpkg_path.replace(".gpkg", "_dokladne.gpkg")
+                base, ext = os.path.splitext(gpkg_path)
+                path_ok = f"{base}_dokladne{ext}"
                 gdf_ok.to_file(path_ok, layer=layer_name, driver="GPKG")
                 print(
                     f"{Fore.GREEN}Wyniki spełniające warunek dokładności zapisano w: {os.path.abspath(path_ok)}{Style.RESET_ALL}"
@@ -165,7 +168,8 @@ def export_to_geopackage(
             # Eksport niespełniających warunku dokładności
             gdf_nok = gdf[~gdf["eksport"]]
             if not gdf_nok.empty:
-                path_nok = gpkg_path.replace(".gpkg", "_niedokladne.gpkg")
+                base, ext = os.path.splitext(gpkg_path)
+                path_nok = f"{base}_niedokladne{ext}"
                 gdf_nok.to_file(path_nok, layer=layer_name, driver="GPKG")
                 print(
                     f"{Fore.GREEN}Wyniki niespełniające warunku dokładności zapisano w: {os.path.abspath(path_nok)}{Style.RESET_ALL}"

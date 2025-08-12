@@ -46,6 +46,11 @@ from .grid_generator import (
 from .export import export_to_csv, export_to_geopackage
 
 
+def generate_output_filename(mode: int, base_name: str, extension: str) -> str:
+    """Generuje nazwę pliku wyjściowego z numerem trybu."""
+    return f"tryb-{mode}_{base_name}.{extension}"
+
+
 def process_grid_generation_mode(
     scope_df: pd.DataFrame,
     grid_spacing: float,
@@ -404,8 +409,8 @@ def main(config_path: str):
 
         if not results_df.empty:
             print(f"\n{Fore.CYAN}--- Zapisywanie wyników ---{Style.RESET_ALL}")
-            output_csv = "wynik_geoportal.csv"
-            output_gpkg = "wynik_geoportal.gpkg"
+            output_csv = generate_output_filename(choice, "wynik_geoportal", "csv")
+            output_gpkg = generate_output_filename(choice, "wynik_geoportal", "gpkg")
 
             export_csv_df = results_df.rename(
                 columns={
@@ -484,8 +489,12 @@ def main(config_path: str):
 
         if not results_df.empty:
             print(f"\n{Fore.CYAN}--- Zapisywanie wyników ---{Style.RESET_ALL}")
-            output_csv = "wynik_siatka_geoportal.csv"
-            output_gpkg = "wynik_siatka_geoportal.gpkg"
+            output_csv = generate_output_filename(
+                choice, "wynik_siatka_geoportal", "csv"
+            )
+            output_gpkg = generate_output_filename(
+                choice, "wynik_siatka_geoportal", "gpkg"
+            )
 
             export_csv_df = results_df.rename(
                 columns={
@@ -698,9 +707,11 @@ def main(config_path: str):
                 punkty_dokladne_df, zakres_df[["x", "y"]].values, sparse_grid_distance
             )
             if not wyniki_siatki_df.empty:
-                output_siatka_csv, output_siatka_gpkg = (
-                    "wynik_siatka.csv",
-                    "wynik_siatka.gpkg",
+                output_siatka_csv = generate_output_filename(
+                    choice, "wynik_siatka", "csv"
+                )
+                output_siatka_gpkg = generate_output_filename(
+                    choice, "wynik_siatka", "gpkg"
                 )
                 export_to_csv(
                     wyniki_siatki_df, output_siatka_csv, split_by_accuracy=False
@@ -726,8 +737,10 @@ def main(config_path: str):
 
     if not results_df.empty:
         print(f"\n{Fore.CYAN}--- Zapisywanie wyników ---{Style.RESET_ALL}")
-        export_to_csv(results_df, "wynik.csv")
-        export_to_geopackage(results_df, input_df, "wynik.gpkg")
+        output_csv = generate_output_filename(choice, "wynik", "csv")
+        output_gpkg = generate_output_filename(choice, "wynik", "gpkg")
+        export_to_csv(results_df, output_csv)
+        export_to_geopackage(results_df, input_df, output_gpkg)
         print(f"\n{Fore.GREEN}Zakończono przetwarzanie pomyślnie!")
     else:
         print(f"{Fore.YELLOW}Nie wygenerowano żadnych wyników.")
