@@ -1,5 +1,3 @@
-# src/core/processor.py
-
 """
 Główny moduł procesora aplikacji diffH
 """
@@ -25,6 +23,8 @@ from ..utils.ui_helpers import (
     get_round_decimals,
     ask_load_config,
     get_comparison_tolerance,
+    get_grid_spacing,
+    get_autonumber_prefix,
 )
 from ..utils.config_manager import load_config, save_config_for_mode
 from ..config.settings import DEBUG_MODE, DEFAULT_SPARSE_GRID_DISTANCE
@@ -39,16 +39,51 @@ from .coordinate_transform import (
     get_transformation_method_info,
 )
 from .geoportal_client import get_geoportal_heights_concurrent
-from .grid_generator import znajdz_punkty_dla_siatki
+from .grid_generator import (
+    znajdz_punkty_dla_siatki,
+    generuj_srodki_heksagonalne_wektorowo,
+)
 from .export import export_to_csv, export_to_geopackage
+
+
+def process_grid_generation_mode(
+    scope_df: pd.DataFrame,
+    grid_spacing: float,
+    prefix: str,
+) -> pd.DataFrame:
+    """
+    Przetwarza dane dla trybu 5: generuje siatkę, pobiera wysokość z Geoportalu.
+    """
+    logging.debug("Rozpoczęto przetwarzanie danych w trybie 'generowanie siatki'.")
+
+    print("\nGenerowanie siatki heksagonalnej w zadanym zakresie...")
+    grid_points_np = generuj_srodki_heksagonalne_wektorowo(
+        scope_df[["x", "y"]].values, grid_spacing
+    )
+
+    if grid_points_np.shape[0] == 0:
+        print(
+            f"{Fore.YELLOW}Nie wygenerowano żadnych punktów siatki wewnątrz zadanego obszaru."
+        )
+        logging.warning("Nie wygenerowano żadnych środków siatki wewnątrz wieloboku.")
+        return pd.DataFrame()
+
+    print(f"Wygenerowano {len(grid_points_np)} punktów siatki.")
+    logging.info(f"Wygenerowano {len(grid_points_np)} punktów siatki heksagonalnej.")
+
+    # Tworzenie DataFrame z wygenerowanych punktów
+    grid_df = pd.DataFrame(grid_points_np, columns=["x", "y"])
+    grid_df.insert(0, "id", [f"{prefix}_{i + 1}" for i in range(len(grid_df))])
+
+    # Dalsze przetwarzanie jest identyczne jak w trybie 4
+    return process_geoportal_only_data(grid_df)
 
 
 def process_geoportal_only_data(
     input_df: pd.DataFrame,
-    round_decimals: int,
 ) -> pd.DataFrame:
     """
-    Przetwarza dane dla trybu 4: pobiera wysokość z Geoportalu dla pliku XY.
+    Przetwarza dane dla trybu 4 i 5: pobiera wysokość z Geoportalu dla pliku XY.
     """
     logging.debug("Rozpoczęto przetwarzanie danych w trybie 'tylko Geoportal'.")
 
@@ -84,17 +119,22 @@ def process_geoportal_only_data(
         )
 
     results_df = pd.DataFrame(results)
+
+    # Zastosowanie stałego zaokrąglenia dla trybów 4 i 5
+    results_df["x"] = pd.to_numeric(results_df["x"], errors="coerce").round(2)
+    results_df["y"] = pd.to_numeric(results_df["y"], errors="coerce").round(2)
+    results_df["h"] = pd.to_numeric(results_df["h"], errors="coerce").round(1)
+
     logging.debug("Zakończono przetwarzanie danych w trybie 'tylko Geoportal'.")
     return results_df
 
 
 def process_data(
-    # ... (bez zmian) ...
     input_df: pd.DataFrame,
     comparison_df: Optional[pd.DataFrame],
     use_geoportal: bool,
     max_distance: float,
-    round_decimals: int = 1,
+    round_decimals: int,
     comparison_tolerance: Optional[float] = None,
     geoportal_tolerance: Optional[float] = None,
 ) -> pd.DataFrame:
@@ -154,7 +194,7 @@ def process_data(
                 "debug_geoportal_brak_wysokosci.csv",
                 sep=";",
                 index=False,
-                float_format=f"%.{round_decimals}f",
+                float_format="%.2f",
             )
             logging.debug(
                 f"Zapisano {len(missing_height_points)} punktów bez wysokości z Geoportalu do pliku debug_geoportal_brak_wysokosci.csv"
@@ -199,7 +239,6 @@ def process_data(
                         "x_porownania": nearest_in_comp_point["x"],
                         "y_porownania": nearest_in_comp_point["y"],
                         "h_porownania": nearest_in_comp_point["h"],
-                        # POWRÓT DO STANDARDOWEGO ZAOKRĄGLANIA
                         "odleglosc_pary": round(distance, 3),
                     }
                 )
@@ -258,6 +297,40 @@ def process_data(
 
     results_df = pd.DataFrame(results)
 
+    # Zastosowanie zaokrąglenia do kolumn wynikowych
+    results_df["x_odniesienia"] = pd.to_numeric(
+        results_df["x_odniesienia"], errors="coerce"
+    ).round(2)
+    results_df["y_odniesienia"] = pd.to_numeric(
+        results_df["y_odniesienia"], errors="coerce"
+    ).round(2)
+    results_df["h_odniesienia"] = pd.to_numeric(
+        results_df["h_odniesienia"], errors="coerce"
+    ).round(round_decimals)
+
+    if "geoportal_h" in results_df.columns:
+        results_df["geoportal_h"] = pd.to_numeric(
+            results_df["geoportal_h"], errors="coerce"
+        ).round(1)
+    if "diff_h_geoportal" in results_df.columns:
+        results_df["diff_h_geoportal"] = pd.to_numeric(
+            results_df["diff_h_geoportal"], errors="coerce"
+        ).round(round_decimals)
+
+    if "x_porownania" in results_df.columns:
+        results_df["x_porownania"] = pd.to_numeric(
+            results_df["x_porownania"], errors="coerce"
+        ).round(2)
+        results_df["y_porownania"] = pd.to_numeric(
+            results_df["y_porownania"], errors="coerce"
+        ).round(2)
+        results_df["h_porownania"] = pd.to_numeric(
+            results_df["h_porownania"], errors="coerce"
+        ).round(round_decimals)
+        results_df["diff_h"] = pd.to_numeric(
+            results_df["diff_h"], errors="coerce"
+        ).round(round_decimals)
+
     sort_col = None
     if use_geoportal and "diff_h_geoportal" in results_df.columns:
         sort_col = "diff_h_geoportal"
@@ -300,62 +373,6 @@ def main(config_path: str):
     display_welcome_screen()
 
     choice = get_user_choice()
-
-    # --- NOWA LOGIKA DLA TRYBU 4 ---
-    if choice == 4:
-        print(
-            f"\n{Fore.CYAN}--- Tryb 4: Pobieranie wysokości z Geoportalu ---{Style.RESET_ALL}"
-        )
-        input_file = get_file_path(
-            f"\n{Fore.YELLOW}Podaj ścieżkę do pliku z punktami (XY): {Style.RESET_ALL}"
-        )
-        swap_input = ask_swap_xy("wejściowego")
-        round_decimals = get_round_decimals()
-
-        # ZMIANA: Wywołujemy load_data z flagą False
-        input_df = load_data(input_file, swap_input, expect_height_column=False)
-        if input_df is None or input_df.empty:
-            print(
-                f"{Fore.RED}Nie udało się wczytać danych wejściowych. Zamykanie programu."
-            )
-            return
-
-        results_df = process_geoportal_only_data(input_df, round_decimals)
-
-        if not results_df.empty:
-            print(f"\n{Fore.CYAN}--- Zapisywanie wyników ---{Style.RESET_ALL}")
-            output_csv = "wynik_geoportal.csv"
-            output_gpkg = "wynik_geoportal.gpkg"
-
-            # Dostosowanie ramek danych do funkcji eksportujących
-            export_csv_df = results_df.rename(
-                columns={
-                    "id": "id_odniesienia",
-                    "x": "x_odniesienia",
-                    "y": "y_odniesienia",
-                    "h": "h_geoportal",
-                }
-            )
-            export_to_csv(export_csv_df, output_csv, round_decimals=round_decimals)
-
-            # W eksporcie do GPKG musimy zachować oryginalne nazwy kolumn X,Y
-            export_gpkg_df = results_df.rename(columns={"h": "h_geoportal"})
-            # Dla GPKG, w 'input_df' przekazujemy ramkę z kolumnami x,y, co jest poprawne
-            export_to_geopackage(
-                export_gpkg_df,
-                results_df,
-                output_gpkg,
-                "wyniki_geoportal",
-                round_decimals,
-                split_by_accuracy=False,
-            )
-
-            print(f"\n{Fore.GREEN}Zakończono przetwarzanie pomyślnie!")
-        else:
-            print(f"{Fore.YELLOW}Nie wygenerowano żadnych wyników.")
-        return  # Zakończ pracę po trybie 4
-
-    # --- ISTNIEJĄCA LOGIKA DLA TRYBÓW 1-3 ---
     all_configs = load_config(config_path)
     mode_settings = all_configs.get(str(choice))
     use_saved_settings = False
@@ -366,6 +383,134 @@ def main(config_path: str):
 
     settings_to_save = {}
 
+    # --- LOGIKA DLA TRYBU 4 ---
+    if choice == 4:
+        print(
+            f"\n{Fore.CYAN}--- Tryb 4: Pobieranie wysokości z Geoportalu ---{Style.RESET_ALL}"
+        )
+        input_file = get_file_path(
+            f"\n{Fore.YELLOW}Podaj ścieżkę do pliku z punktami (XY): {Style.RESET_ALL}"
+        )
+        swap_input = ask_swap_xy("wejściowego")
+
+        input_df = load_data(input_file, swap_input, expect_height_column=False)
+        if input_df is None or input_df.empty:
+            print(
+                f"{Fore.RED}Nie udało się wczytać danych wejściowych. Zamykanie programu."
+            )
+            return
+
+        results_df = process_geoportal_only_data(input_df)
+
+        if not results_df.empty:
+            print(f"\n{Fore.CYAN}--- Zapisywanie wyników ---{Style.RESET_ALL}")
+            output_csv = "wynik_geoportal.csv"
+            output_gpkg = "wynik_geoportal.gpkg"
+
+            export_csv_df = results_df.rename(
+                columns={
+                    "id": "id_odniesienia",
+                    "x": "x_odniesienia",
+                    "y": "y_odniesienia",
+                    "h": "h_geoportal",
+                }
+            )
+            export_to_csv(export_csv_df, output_csv, split_by_accuracy=False)
+
+            export_gpkg_df = results_df.rename(columns={"h": "h_geoportal"})
+            export_to_geopackage(
+                export_gpkg_df,
+                results_df,
+                output_gpkg,
+                "wyniki_geoportal",
+                split_by_accuracy=False,
+            )
+
+            print(f"\n{Fore.GREEN}Zakończono przetwarzanie pomyślnie!")
+        else:
+            print(f"{Fore.YELLOW}Nie wygenerowano żadnych wyników.")
+        return
+
+    # --- LOGIKA DLA TRYBU 5 ---
+    elif choice == 5:
+        print(
+            f"\n{Fore.CYAN}--- Tryb 5: Generowanie siatki i pobieranie wysokości ---{Style.RESET_ALL}"
+        )
+        scope_file = get_file_path(
+            f"\n{Fore.YELLOW}Podaj ścieżkę do pliku z zakresem (wielobok XY): {Style.RESET_ALL}"
+        )
+
+        if (
+            use_saved_settings
+            and mode_settings is not None
+            and "swap_scope" in mode_settings
+        ):
+            swap_scope = mode_settings["swap_scope"]
+        else:
+            swap_scope = ask_swap_xy("z zakresem")
+            settings_to_save["swap_scope"] = swap_scope
+
+        if (
+            use_saved_settings
+            and mode_settings is not None
+            and "grid_spacing" in mode_settings
+        ):
+            grid_spacing = mode_settings["grid_spacing"]
+        else:
+            grid_spacing = get_grid_spacing()
+            settings_to_save["grid_spacing"] = grid_spacing
+
+        if (
+            use_saved_settings
+            and mode_settings is not None
+            and "prefix" in mode_settings
+        ):
+            prefix = mode_settings["prefix"]
+        else:
+            prefix = get_autonumber_prefix()
+            settings_to_save["prefix"] = prefix
+
+        if settings_to_save:
+            save_config_for_mode(choice, settings_to_save, config_path)
+
+        scope_df = load_scope_data(scope_file, swap_scope)
+        if scope_df is None or scope_df.empty:
+            print(
+                f"{Fore.RED}Nie udało się wczytać danych zakresu. Zamykanie programu."
+            )
+            return
+
+        results_df = process_grid_generation_mode(scope_df, grid_spacing, prefix)
+
+        if not results_df.empty:
+            print(f"\n{Fore.CYAN}--- Zapisywanie wyników ---{Style.RESET_ALL}")
+            output_csv = "wynik_siatka_geoportal.csv"
+            output_gpkg = "wynik_siatka_geoportal.gpkg"
+
+            export_csv_df = results_df.rename(
+                columns={
+                    "id": "id_odniesienia",
+                    "x": "x_odniesienia",
+                    "y": "y_odniesienia",
+                    "h": "h_geoportal",
+                }
+            )
+            export_to_csv(export_csv_df, output_csv, split_by_accuracy=False)
+
+            export_gpkg_df = results_df.rename(columns={"h": "h_geoportal"})
+            export_to_geopackage(
+                export_gpkg_df,
+                results_df,
+                output_gpkg,
+                "siatka_geoportal",
+                split_by_accuracy=False,
+            )
+            print(f"\n{Fore.GREEN}Zakończono przetwarzanie pomyślnie!")
+        else:
+            print(f"{Fore.YELLOW}Nie wygenerowano żadnych wyników.")
+        return
+
+    # --- ISTNIEJĄCA LOGIKA DLA TRYBÓW 1-3 ---
     max_distance = 0.0
     if choice in [1, 3]:
         if (
@@ -385,10 +530,7 @@ def main(config_path: str):
     ):
         round_decimals = mode_settings["round_decimals"]
     else:
-        # Pytanie o zaokrąglenie w trybach 1-3
-        prompt = f"\n{Fore.YELLOW}Podaj liczbę miejsc po przecinku do zaokrąglenia danych wejściowych (domyślnie: 1): {Style.RESET_ALL}"
-        val = input(prompt).strip()
-        round_decimals = int(val) if val.isdigit() and 0 <= int(val) <= 6 else 1
+        round_decimals = get_round_decimals()
         settings_to_save["round_decimals"] = round_decimals
 
     input_file = get_file_path(
@@ -512,14 +654,9 @@ def main(config_path: str):
         )
         return
 
-    for col in ["x", "y", "h"]:
-        input_df[col] = input_df[col].round(round_decimals)
-
     comparison_df = (
         load_data(comparison_file, swap_comparison) if comparison_file else None
     )
-    if comparison_df is not None and "h" in comparison_df.columns:
-        comparison_df["h"] = comparison_df["h"].round(round_decimals)
 
     if sparse_grid_requested and zakres_df is not None:
         input_epsg = get_source_epsg(
@@ -565,12 +702,8 @@ def main(config_path: str):
                     "wynik_siatka.csv",
                     "wynik_siatka.gpkg",
                 )
-                wyniki_siatki_df.to_csv(
-                    output_siatka_csv,
-                    sep=";",
-                    index=False,
-                    float_format=f"%.{round_decimals}f",
-                    na_rep="brak_danych",
+                export_to_csv(
+                    wyniki_siatki_df, output_siatka_csv, split_by_accuracy=False
                 )
                 print(
                     f"{Fore.GREEN}Wyniki rozrzedzonej siatki zapisano w pliku CSV: {os.path.abspath(output_siatka_csv)}{Style.RESET_ALL}"
@@ -580,8 +713,7 @@ def main(config_path: str):
                     input_df,
                     output_siatka_gpkg,
                     "wynik_siatki",
-                    round_decimals,
-                    False,
+                    split_by_accuracy=False,
                 )
             else:
                 print(
@@ -594,10 +726,8 @@ def main(config_path: str):
 
     if not results_df.empty:
         print(f"\n{Fore.CYAN}--- Zapisywanie wyników ---{Style.RESET_ALL}")
-        export_to_csv(results_df, "wynik.csv", round_decimals=round_decimals)
-        export_to_geopackage(
-            results_df, input_df, "wynik.gpkg", round_decimals=round_decimals
-        )
+        export_to_csv(results_df, "wynik.csv")
+        export_to_geopackage(results_df, input_df, "wynik.gpkg")
         print(f"\n{Fore.GREEN}Zakończono przetwarzanie pomyślnie!")
     else:
         print(f"{Fore.YELLOW}Nie wygenerowano żadnych wyników.")

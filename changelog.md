@@ -4,20 +4,26 @@ Wszystkie istotne zmiany w tym projekcie będą dokumentowane w tym pliku.
 
 Format bazuje na [Keep a Changelog](https://keepachangelog.com/en/1.0.0/), a projekt stosuje [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [1.4.0] - 2025-08-03
+## [1.4.0] - 2025-08-04
 
 ### Dodano
 
 *   **Tryb 4 - Wzbogacanie danych o wysokość:**
     *   Dodano nowy tryb działania (opcja 4 w menu), który umożliwia wczytanie pliku z samymi współrzędnymi (w formacie `ID,X,Y` lub `X,Y`).
-    *   Program automatycznie transformuje współrzędne do EPSG:2180, pobiera wysokość z API Geoportal.gov.pl, a następnie zapisuje kompletne dane (`ID,X,Y,H`) do plików wynikowych.
-    *   Wyniki dla tego trybu są zapisywane do plików `wynik_geoportal.csv` i `wynik_geoportal.gpkg`.
+    *   Program automatycznie pobiera wysokość z API Geoportal.gov.pl i zapisuje kompletne dane (`ID,X,Y,H`) do plików `wynik_geoportal.csv` i `wynik_geoportal.gpkg`.
+
+*   **Tryb 5 - Generowanie siatki i pobieranie wysokości:**
+    *   Dodano nowy, niezależny tryb działania (opcja 5 w menu).
+    *   Na podstawie pliku z zakresem (wielobokiem) i zadanego odstępu, program generuje regularną siatkę heksagonalną punktów.
+    *   Dla każdego punktu siatki pobierana jest wysokość z API Geoportal.gov.pl.
+    *   Użytkownik może zdefiniować własny prefiks dla automatycznie generowanych numerów punktów.
+    *   Wyniki są zapisywane do plików `wynik_siatka_geoportal.csv` i `wynik_siatka_geoportal.gpkg`.
 
 ### Zmieniono
 
-*   **Refaktoryzacja wczytywania danych:**
-    *   Ujednolicono funkcję `load_data`, aby obsługiwała wszystkie typy plików wejściowych (zarówno te z kolumną wysokości, jak i bez niej), eliminując potrzebę tworzenia osobnej funkcji.
-    *   Poprawiło to strukturę kodu, zmniejszyło jego powielanie i uprościło logikę.
+*   **Refaktoryzacja wczytywania danych:** Ujednolicono funkcję `load_data`, aby obsługiwała pliki wejściowe z kolumną wysokości i bez niej, co uprościło logikę dla nowych trybów.
+*   **Ulepszenia eksportu:** Funkcje `export_to_csv` i `export_to_geopackage` zostały dostosowane, aby poprawnie obsługiwać wyniki z trybów 4 i 5, które nie wymagają podziału na pliki `_dokladne` i `_niedokladne`.
+*   **Interfejs użytkownika:** Zaktualizowano menu główne i komunikaty, aby uwzględnić nowe tryby 4 i 5.
 
 ## [1.3.1] - 2025-08-02
 
@@ -156,4 +162,4 @@ Format bazuje na [Keep a Changelog](https://keepachangelog.com/en/1.0.0/), a pro
 
 ### Dodano
 
-*   Wersja początkowa programu.
+*   Wersja początkowa 

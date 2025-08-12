@@ -10,15 +10,16 @@
 
 ### Główne Funkcje
 
-*   **Pobieranie Wysokości (Tryb 4):** Nowa, dedykowana funkcja umożliwiająca wczytanie pliku z samymi współrzędnymi (`X,Y` lub `ID,X,Y`) i automatyczne pobranie dla nich wysokości z serwisu Geoportal.gov.pl. Wyniki (`ID,X,Y,H`) są eksportowane do plików CSV i GPKG.
 *   **Zaawansowane Porównanie Plików (Tryby 1-3):** Porównywanie punktów z pliku wejściowego z punktami z drugiego pliku referencyjnego na podstawie progu odległości i wzajemności (najbliżsi sąsiedzi).
-*   **Porównanie z Geoportal.gov.pl (Tryby 2-3):** Pobieranie wysokości z serwisu Geoportal.gov.pl dla punktów z pliku wejściowego i dołączenie ich do wyników. Wysyłka punktów do API odbywa się w paczkach po maksymalnie 300 punktów.
+*   **Pobieranie Wysokości dla Listy Punktów (Tryb 4):** Dedykowana funkcja umożliwiająca wczytanie pliku z samymi współrzędnymi (`X,Y` lub `ID,X,Y`) i automatyczne pobranie dla nich wysokości z serwisu Geoportal.gov.pl.
+*   **Generowanie Siatki i Pobieranie Wysokości (Tryb 5):** Nowa funkcja, która na podstawie pliku z zakresem (wielobok) i zadanego odstępu generuje regularną siatkę heksagonalną punktów, a następnie automatycznie pobiera dla nich wysokości z Geoportalu.
+*   **Integracja z Geoportal.gov.pl (Tryby 2-3):** Pobieranie wysokości z serwisu Geoportal.gov.pl dla punktów z pliku wejściowego i dołączenie ich do wyników. Wysyłka punktów do API odbywa się w paczkach po maksymalnie 300 punktów.
 *   **Transformacja Współrzędnych:** Automatyczne przeliczanie współrzędnych z układu **PL-2000** (strefy 5, 6, 7, 8 - EPSG: 2176, 2177, 2178, 2179) do układu **PL-1992** (EPSG: 2180).
-*   **Przyspieszenie GPU (CUDA):** Automatyczne wykrywanie kart NVIDIA i wykorzystanie przyspieszenia CUDA do transformacji współrzędnych. Program automatycznie przełącza się między przetwarzaniem GPU a CPU w zależności od dostępności sprzętu.
+*   **Przyspieszenie GPU (CUDA):** Automatyczne wykrywanie kart NVIDIA i wykorzystanie przyspieszenia CUDA do transformacji współrzędnych. Program sam przełącza się między przetwarzaniem GPU a CPU w zależności od dostępności sprzętu.
 *   **Inteligentna Analiza Danych:**
     *   **Automatyczne wykrywanie separatora** w plikach wejściowych (obsługuje średnik, przecinek, spację/tabulator).
     *   **Automatyczne wykrywanie konwencji osi współrzędnych** (`X,Y` vs `Y,X`). Użytkownik może też ręcznie wskazać zamianę osi.
-*   **Eksport rozrzedzonej siatki:** Możliwość wygenerowania reprezentatywnej, rozrzedzonej siatki punktów, które spełniają kryterium dokładności. Algorytm bazuje na heksagonalnym pokryciu zadanego obszaru.
+*   **Eksport rozrzedzonej siatki (Tryby 2-3):** Możliwość wygenerowania reprezentatywnej, rozrzedzonej siatki punktów, które spełniają kryterium dokładności. Algorytm bazuje na heksagonalnym pokryciu zadanego obszaru.
 *   **Obsługa plików Excel:** Możliwość wczytywania plików wejściowych w formatach `.xls` i `.xlsx`.
 *   **Personalizowana autonumeracja:** Przy wczytywaniu plików bez kolumny ID, użytkownik może podać własny prefiks dla automatycznie generowanych numerów punktów.
 *   **Obliczanie różnic i tolerancji:** Program oblicza różnice wysokości (`diff_h`, `diff_h_geoportal`) i pozwala użytkownikowi zdefiniować progi tolerancji, oznaczając punkty jako `Tak`/`Nie` w kolumnie `osiaga_dokladnosc`.
@@ -82,7 +83,7 @@ Po wykonaniu tych kroków środowisko jest gotowe do pracy.
     python main.py
     ```
 3.  Postępuj zgodnie z instrukcjami na ekranie:
-    *   Wybierz tryb działania (1 - porównanie z plikiem, 2 - porównanie z geoportalem, 3 - oba porównania, 4 - pobranie wysokości dla pliku XY).
+    *   Wybierz tryb działania (1-5).
     *   Podaj ścieżki do plików oraz inne parametry zgodnie z monitami.
 4.  Po zakończeniu pracy, w folderze ze skryptem zostaną utworzone pliki wynikowe.
 
@@ -93,6 +94,7 @@ Po wykonaniu tych kroków środowisko jest gotowe do pracy.
 *   **Układ współrzędnych:** Program oczekuje współrzędnych w układzie PL-2000. Konwencja osi (`X,Y` vs `Y,X`) jest wykrywana automatycznie, ale użytkownik może ją nadpisać.
 
 #### Struktura pliku (tryby 1, 2, 3):
+Plik zawiera punkty z wysokością.
 *   **4 kolumny:** `numer_punktu`, `współrzędna_X`, `współrzędna_Y`, `wysokość_H`.
 *   **3 kolumny:** `współrzędna_X`, `współrzędna_Y`, `wysokość_H` (program poprosi o prefiks do autonumeracji).
 **Przykład:**
@@ -102,12 +104,24 @@ Po wykonaniu tych kroków środowisko jest gotowe do pracy.
 ```
 
 #### Struktura pliku (tryb 4):
+Plik zawiera listę punktów bez wysokości.
 *   **3 kolumny:** `numer_punktu`, `współrzędna_X`, `współrzędna_Y`.
 *   **2 kolumny:** `współrzędna_X`, `współrzędna_Y` (program poprosi o prefiks do autonumeracji).
 **Przykład:**
 ```csv
 P1;5958143.50;7466893.08
 P2;5955909.72;7466350.05
+```
+
+#### Struktura pliku (tryb 5 - plik z zakresem):
+Plik zawiera wierzchołki wieloboku definiującego obszar.
+*   **3 kolumny:** `numer_wierzchołka`, `współrzędna_X`, `współrzędna_Y`.
+*   **2 kolumny:** `współrzędna_X`, `współrzędna_Y`.
+**Przykład:**
+```csv
+W1;5958143.50;7466893.08
+W2;5955909.72;7466350.05
+W3;5955900.00;7466900.00
 ```
 
 ### Format Pliku Wyjściowego
@@ -119,6 +133,9 @@ P2;5955909.72;7466350.05
 *   **Nazwy plików (tryb 4):**
     *   `wynik_geoportal.csv`
     *   `wynik_geoportal.gpkg`
+*   **Nazwy plików (tryb 5):**
+    *   `wynik_siatka_geoportal.csv`
+    *   `wynik_siatka_geoportal.gpkg`
 *   **Opcjonalnie (tryby 2-3):** `wynik_siatka.csv`, `wynik_siatka.gpkg`
 *   Separator w plikach CSV to średnik (`;`).
 *   Brakujące dane są oznaczane jako `brak_danych`.
@@ -139,17 +156,19 @@ P2;5955909.72;7466350.05
         python main.py
         ```
 2.  **Wybór trybu działania**
-    *   Program wyświetli menu z czterema trybami:
+    *   Program wyświetli menu z pięcioma trybami:
         1.  Porównanie pliku wejściowego z drugim plikiem.
         2.  Porównanie pliku wejściowego z danymi z Geoportal.gov.pl.
         3.  Porównanie pliku wejściowego z drugim plikiem ORAZ z Geoportal.gov.pl.
-        4.  **Nowość:** Pobranie wysokości z Geoportal.gov.pl dla pliku z punktami (XY).
-    *   Wybierz odpowiednią opcję wpisując 1, 2, 3 lub 4.
+        4.  Pobranie wysokości z Geoportal.gov.pl dla pliku z punktami (XY).
+        5.  **Nowość:** Wygenerowanie siatki punktów w zadanym zakresie i pobranie dla nich wysokości.
+    *   Wybierz odpowiednią opcję wpisując 1, 2, 3, 4 lub 5.
 3.  **Podanie parametrów**
     *   W zależności od wybranego trybu, program poprosi o:
-        *   Ścieżkę do pliku wejściowego (i opcjonalnie porównawczego).
+        *   Ścieżkę do pliku wejściowego (i opcjonalnie porównawczego lub z zakresem).
         *   Informację o ewentualnej zamianie kolumn (Y,X zamiast X,Y).
         *   Parametry porównania (maksymalna odległość, tolerancja wysokości).
+        *   Parametry generowania siatki (odstęp między punktami, prefiks numeracji).
         *   Parametry eksportu rozrzedzonej siatki (dla trybów 2 i 3).
         *   Liczbę miejsc po przecinku dla danych wynikowych.
 4.  **Wczytywanie i analiza danych**
